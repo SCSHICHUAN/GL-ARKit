@@ -102,12 +102,12 @@ static void applyFormatLayout(CatalogEntry& e) {
         // glTF：米制人模；扶正后默认正面，略下移/右移进画面中心
         e.scale = 1.0f;
         e.yOffset = -1.0f;
-        e.xOffset = 0.1f;
+        e.xOffset = 0.0f;
         e.defaultYawDeg = 0.0f;
         // whiteMan / blackMan 扶正后仍略前倾，初始化后仰一点（Wolf 等 FBX 不走这里）
         e.defaultPitchDeg = 10.0f;
-        e.cameraY = 0.0f;
-        e.cameraZ = 3.5f;
+        e.cameraY = 0.3f;
+        e.cameraZ = 4.0f;
     } else {
         // obj/dae 等
         e.scale = 1.0f;
