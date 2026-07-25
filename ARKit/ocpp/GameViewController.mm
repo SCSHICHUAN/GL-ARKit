@@ -1,10 +1,12 @@
 /*
   GameViewController.mm
   UI host: embeds SCRenderer; horizontal CollectionView of model animation clips.
+  Also starts SCARKitSession to dump head/body/face (not linked to model yet).
 */
 
 #import "GameViewController.h"
 #import "SCRenderer.h"
+#import "arkit/SCARKitSession.h"
 
 static NSString * const kAnimCellId = @"AnimClipCell";
 
@@ -27,31 +29,23 @@ static NSString * const kAnimCellId = @"AnimClipCell";
         [NSLayoutConstraint activateConstraints:@[
             [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:10],
             [self.titleLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-10],
-            [self.titleLabel.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:8],
-            [self.titleLabel.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-8],
+            [self.titleLabel.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
         ]];
     }
     return self;
 }
 
-- (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)layoutAttributes {
-    [self setNeedsLayout];
-    [self layoutIfNeeded];
-    CGSize size = [self.contentView systemLayoutSizeFittingSize:UILayoutFittingCompressedSize];
-    UICollectionViewLayoutAttributes *attrs = [layoutAttributes copy];
-    CGRect frame = attrs.frame;
-    frame.size = CGSizeMake(ceil(size.width), MAX(36.0, ceil(size.height)));
-    attrs.frame = frame;
-    return attrs;
-}
 @end
 
-@interface GameViewController () <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout>
+@interface GameViewController () <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, SCARKitSessionDelegate>
 @property (nonatomic, strong) SCRenderer *glView;
 @property (nonatomic, strong) UICollectionView *animCollection;
 @property (nonatomic, strong) UIButton *pauseButton;
+@property (nonatomic, strong) UIButton *arModeButton;
+@property (nonatomic, strong) UILabel *arDumpLabel;
 @property (nonatomic, strong) UIStackView *movePad;
 @property (nonatomic, copy) NSArray<NSString *> *animNames;
+@property (nonatomic, strong) SCARKitSession *arSession;
 @end
 
 @implementation GameViewController
@@ -67,6 +61,95 @@ static NSString * const kAnimCellId = @"AnimClipCell";
 
     self.animNames = [self.glView animationNames] ?: @[];
     [self setupControls];
+    [self setupARKit];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [self.arSession stop];
+}
+
+#pragma mark - ARKit (dump only)
+
+- (void)setupARKit {
+    self.arSession = [[SCARKitSession alloc] init];
+    self.arSession.delegate = self;
+    self.arSession.logInterval = 0.5;
+
+    BOOL faceOK = [SCARKitSession isFaceTrackingSupported];
+    BOOL bodyOK = [SCARKitSession isBodyTrackingSupported];
+    NSLog(@"[ARKit] device support: face=%d body=%d", (int)faceOK, (int)bodyOK);
+
+    if (!faceOK && !bodyOK) {
+        self.arDumpLabel.text = @"ARKit: 此设备不支持 Face/Body 追踪";
+        return;
+    }
+
+    SCARKitTrackingMode mode = faceOK ? SCARKitTrackingModeFace : SCARKitTrackingModeBody;
+    self.arDumpLabel.text = @"ARKit: 请求相机权限…";
+    [self.arSession startWithMode:mode];
+    [self refreshARModeButton];
+}
+
+- (void)toggleARMode {
+    SCARKitTrackingMode next = (self.arSession.mode == SCARKitTrackingModeFace)
+        ? SCARKitTrackingModeBody
+        : SCARKitTrackingModeFace;
+    [self.arSession switchToMode:next];
+    [self refreshARModeButton];
+}
+
+- (void)refreshARModeButton {
+    BOOL face = self.arSession.mode == SCARKitTrackingModeFace;
+    NSString *title = face ? @"AR:Face" : @"AR:Body";
+    [self.arModeButton setTitle:title forState:UIControlStateNormal];
+}
+
+- (void)arSession:(SCARKitSession *)session didUpdateFace:(SCARFaceData *)face {
+    simd_float3 p = face.head.position;
+    __block NSInteger active = 0;
+    [face.blendShapes enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSNumber *val, BOOL *stop) {
+        if (val.floatValue > 0.05f) active++;
+    }];
+    NSString *text = [NSString stringWithFormat:
+                      @"FACE/HEAD  pos=(%.2f, %.2f, %.2f)\nblendShapes active=%ld / %lu  meshVerts=%ld",
+                      p.x, p.y, p.z, (long)active,
+                      (unsigned long)face.blendShapes.count, (long)face.geometryVertexCount];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.arDumpLabel.text = text;
+    });
+}
+
+- (void)arSession:(SCARKitSession *)session didUpdateBody:(SCARBodyData *)body {
+    NSInteger tracked = 0;
+    for (SCARBodyJoint *j in body.joints) {
+        if (j.tracked) tracked++;
+    }
+    NSString *headLine = @"HEAD  (n/a)";
+    if (body.head) {
+        simd_float3 p = body.head.position;
+        headLine = [NSString stringWithFormat:@"HEAD  pos=(%.2f, %.2f, %.2f)", p.x, p.y, p.z];
+    }
+    NSString *text = [NSString stringWithFormat:@"BODY/%@\ntracked joints=%ld / %lu",
+                      headLine, (long)tracked, (unsigned long)body.joints.count];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.arDumpLabel.text = text;
+    });
+}
+
+- (void)arSession:(SCARKitSession *)session didFailWithMessage:(NSString *)message {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.arDumpLabel.text = [NSString stringWithFormat:@"ARKit: %@", message];
+    });
+}
+
+- (void)arSession:(SCARKitSession *)session didChangeMode:(SCARKitTrackingMode)mode {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self refreshARModeButton];
+        self.arDumpLabel.text = mode == SCARKitTrackingModeFace
+            ? @"ARKit Face: waiting for face…"
+            : @"ARKit Body: stand in rear camera view…";
+    });
 }
 
 #pragma mark - Controls (UI only)
@@ -97,10 +180,10 @@ static NSString * const kAnimCellId = @"AnimClipCell";
 - (void)setupControls {
     UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
     layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;
-    layout.estimatedItemSize = UICollectionViewFlowLayoutAutomaticSize;
     layout.minimumInteritemSpacing = 6;
     layout.minimumLineSpacing = 6;
     layout.sectionInset = UIEdgeInsetsMake(0, 0, 0, 0);
+    // Fixed row height — avoids self-sizing layout thrash inside a 40pt-tall collection.
 
     self.animCollection = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
     self.animCollection.translatesAutoresizingMaskIntoConstraints = NO;
@@ -114,6 +197,21 @@ static NSString * const kAnimCellId = @"AnimClipCell";
     self.pauseButton = [self makeButton:@"Pause" action:@selector(togglePause)];
     self.pauseButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.pauseButton];
+
+    self.arModeButton = [self makeButton:@"AR:Face" action:@selector(toggleARMode)];
+    self.arModeButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.arModeButton];
+
+    self.arDumpLabel = [[UILabel alloc] init];
+    self.arDumpLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.arDumpLabel.numberOfLines = 3;
+    self.arDumpLabel.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightRegular];
+    self.arDumpLabel.textColor = UIColor.greenColor;
+    self.arDumpLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];
+    self.arDumpLabel.layer.cornerRadius = 6;
+    self.arDumpLabel.clipsToBounds = YES;
+    self.arDumpLabel.text = @"ARKit: starting…";
+    [self.view addSubview:self.arDumpLabel];
 
     self.movePad = [[UIStackView alloc] init];
     self.movePad.axis = UILayoutConstraintAxisVertical;
@@ -148,13 +246,21 @@ static NSString * const kAnimCellId = @"AnimClipCell";
         [self.pauseButton.topAnchor constraintEqualToAnchor:g.topAnchor constant:8],
         [self.pauseButton.heightAnchor constraintEqualToConstant:36],
 
+        [self.arModeButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.arModeButton.topAnchor constraintEqualToAnchor:self.pauseButton.bottomAnchor constant:6],
+        [self.arModeButton.heightAnchor constraintEqualToConstant:36],
+
         [self.animCollection.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
         [self.animCollection.trailingAnchor constraintEqualToAnchor:self.pauseButton.leadingAnchor constant:-8],
         [self.animCollection.topAnchor constraintEqualToAnchor:g.topAnchor constant:8],
         [self.animCollection.heightAnchor constraintEqualToConstant:40],
 
+        [self.arDumpLabel.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
+        [self.arDumpLabel.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-8],
+        [self.arDumpLabel.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-8],
+
         [self.movePad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12],
-        [self.movePad.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-12],
+        [self.movePad.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
     ]];
 }
 
@@ -172,6 +278,16 @@ static NSString * const kAnimCellId = @"AnimClipCell";
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     [self.glView playAnimationAtIndex:indexPath.item];
+}
+
+- (CGSize)collectionView:(UICollectionView *)collectionView
+                  layout:(UICollectionViewLayout *)collectionViewLayout
+  sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSString *name = self.animNames[(NSUInteger)indexPath.item];
+    CGSize textSize = [name sizeWithAttributes:@{
+        NSFontAttributeName: [UIFont monospacedDigitSystemFontOfSize:14 weight:UIFontWeightSemibold]
+    }];
+    return CGSizeMake(ceil(textSize.width) + 20.0, 32.0);
 }
 
 #pragma mark - Button → SCRenderer

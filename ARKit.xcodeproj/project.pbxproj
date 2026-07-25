@@ -14,11 +14,16 @@
 		26D7B5F6F0924421999773D6 /* colors-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 26E020C3872A4005B77533C9 /* colors-vs.vs */; };
 		3963635B1F724E3A9A76FACB /* Wolf_One_fbx7.4_binary.fbx in CopyWolf */ = {isa = PBXBuildFile; fileRef = 9D55902C66BC4E2DB9A41104 /* Wolf_One_fbx7.4_binary.fbx */; };
 		43D0639593294682A7A9EA72 /* lamp-fs.fs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 6A26192DE3D54569B2683689 /* lamp-fs.fs */; };
+		50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */; };
 		71229441BA344699A0E19106 /* Wolf_Body.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = 49DCD418EB10443FB3D7B6E7 /* Wolf_Body.jpg */; };
 		810A595570CA44DB90DBCA12 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9EAF6FEBF847409AB9CB8706 /* libz.tbd */; };
 		853D2509691E4E29A33B3B47 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 6DC33C57086843E4847844A7 /* AppDelegate.m */; };
 		8DE0F791E11B4D2AA9CDA0EA /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AC4095A219F84F9A9237989F /* QuartzCore.framework */; };
 		9966C55CF3644A8191C5BF38 /* OpenGLES.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F9BACB833D454156810C34EA /* OpenGLES.framework */; };
+		A1ARKIT0000000000000010 /* SCARTypes.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000002 /* SCARTypes.m */; };
+		A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000004 /* SCARKitSession.mm */; };
+		A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000005 /* ARKit.framework */; };
+		A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000006 /* AVFoundation.framework */; };
 		A2FCCBD4B989469D8620780F /* Wolf_Eyes_1.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = A35928BD29E8469F930951E1 /* Wolf_Eyes_1.jpg */; };
 		AABEFF57A9AE45078658E784 /* animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1B4A856417284C869F0E21D1 /* animation.cpp */; };
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
@@ -29,7 +34,6 @@
 		E61EDD15EE5C40248FA1073F /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D66CB5A86F814322B67F7598 /* UIKit.framework */; };
 		E649036B476D4116A5B7D3CB /* GameViewController.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1059502749CE47029A362E0B /* GameViewController.mm */; };
 		E80FF64E59464F90A3F6D351 /* SCRendererData.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8674B3AB76BF4D27A049B2B4 /* SCRendererData.cpp */; };
-		50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -340,6 +344,7 @@
 		7921A0638E60404EB47F84B3 /* extend.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = extend.inl; sourceTree = "<group>"; };
 		79FD048493D243B2992C19E9 /* ByteSwapper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ByteSwapper.h; sourceTree = "<group>"; };
 		7A73812271D14CC4A6936BC0 /* rotate_vector.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = rotate_vector.hpp; sourceTree = "<group>"; };
+		7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SCRenderer.mm; sourceTree = "<group>"; };
 		7BFB1658D6984803896B1F9E /* revision.h.in */ = {isa = PBXFileReference; lastKnownFileType = text; path = revision.h.in; sourceTree = "<group>"; };
 		7C5A1E3A84114D75B2C1C728 /* texture.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = texture.inl; sourceTree = "<group>"; };
 		7D70452458F5415389784F4E /* string_cast.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = string_cast.hpp; sourceTree = "<group>"; };
@@ -422,6 +427,12 @@
 		A10B11B0F20142D9ADA7D74F /* type_mat2x3.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_mat2x3.inl; sourceTree = "<group>"; };
 		A15D7AD9BF604ADD9DEE0567 /* matrix_factorisation.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = matrix_factorisation.inl; sourceTree = "<group>"; };
 		A1A0238756344A688FEBE52D /* IOStreamBuffer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOStreamBuffer.h; sourceTree = "<group>"; };
+		A1ARKIT0000000000000001 /* SCARTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARTypes.h; sourceTree = "<group>"; };
+		A1ARKIT0000000000000002 /* SCARTypes.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARTypes.m; sourceTree = "<group>"; };
+		A1ARKIT0000000000000003 /* SCARKitSession.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARKitSession.h; sourceTree = "<group>"; };
+		A1ARKIT0000000000000004 /* SCARKitSession.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SCARKitSession.mm; sourceTree = "<group>"; };
+		A1ARKIT0000000000000005 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
+		A1ARKIT0000000000000006 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A1F79938864F4570805DEFEE /* type_vec1.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_vec1.inl; sourceTree = "<group>"; };
 		A29164DF5D7F4D1DB3F792B9 /* color4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = color4.h; sourceTree = "<group>"; };
 		A34C55A972EE4ABEABFBE482 /* vector_float3_precision.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_float3_precision.hpp; sourceTree = "<group>"; };
@@ -452,6 +463,7 @@
 		B14B9C7B567A481A9C233D54 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B17D41794E0C473B9AE0983B /* GameViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GameViewController.h; sourceTree = "<group>"; };
 		B19D2A9693DA41D5BBA634F8 /* quaternion.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = quaternion.inl; sourceTree = "<group>"; };
+		B1E435FA4CD44056A1DC35E8 /* SCRenderer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCRenderer.h; sourceTree = "<group>"; };
 		B24BB76110134425B8065AA8 /* bit.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = bit.inl; sourceTree = "<group>"; };
 		B26D3B5147D841BFA1011D13 /* func_trigonometric_simd.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = func_trigonometric_simd.inl; sourceTree = "<group>"; };
 		B2C83B4C677D443EBDACF518 /* quaternion_double.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = quaternion_double.hpp; sourceTree = "<group>"; };
@@ -625,8 +637,6 @@
 		FE2599B2FF224BAC84DD4E49 /* vector_bool4_precision.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_bool4_precision.hpp; sourceTree = "<group>"; };
 		FF211DB3044347D3862626AC /* RemoveComments.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RemoveComments.h; sourceTree = "<group>"; };
 		FF60D7C331394042B2FC3066 /* vector_bool3.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_bool3.hpp; sourceTree = "<group>"; };
-		B1E435FA4CD44056A1DC35E8 /* SCRenderer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCRenderer.h; sourceTree = "<group>"; };
-		7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SCRenderer.mm; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -640,6 +650,8 @@
 				8DE0F791E11B4D2AA9CDA0EA /* QuartzCore.framework in Frameworks */,
 				CD1B44AF45C3435CAF1A7E99 /* libc++.tbd in Frameworks */,
 				810A595570CA44DB90DBCA12 /* libz.tbd in Frameworks */,
+				A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */,
+				A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -902,20 +914,10 @@
 		A10000040000000100000002 /* ARKit */ = {
 			isa = PBXGroup;
 			children = (
+				F6D8637530149DAE00362330 /* ocpp */,
+				F6D8637430149D4B00362330 /* GL */,
+				A1ARKIT0000000000000020 /* arkit */,
 				133BF7DA08574D7C81E889FC /* other */,
-				B17D41794E0C473B9AE0983B /* GameViewController.h */,
-				1059502749CE47029A362E0B /* GameViewController.mm */,
-				B1E435FA4CD44056A1DC35E8 /* SCRenderer.h */,
-				7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */,
-				31739F52BBE543F48776DC84 /* SCRendererData.h */,
-				8674B3AB76BF4D27A049B2B4 /* SCRendererData.cpp */,
-				0C8B75AC12694C65B72D36E0 /* animation.h */,
-				1B4A856417284C869F0E21D1 /* animation.cpp */,
-				FA404718B97B44ADBE24CAE8 /* model.h */,
-				A501272449384F33B1C93724 /* mesh.h */,
-				ED9274211CE34B6FA3ED379D /* Camera.h */,
-				FCDE3ED576FB4926A87657BD /* shader.h */,
-				6EE6E50E43FE463BB6E23DD8 /* gl_platform.h */,
 				4DC45F3A999A46C68D9EFA47 /* assimp */,
 				8B79B6C380BC4CF69F003FA5 /* libs */,
 				5F43A1C12BB5457FB0F7C274 /* shaders */,
@@ -933,6 +935,8 @@
 				AC4095A219F84F9A9237989F /* QuartzCore.framework */,
 				F71CCB474A3146C1BA298D3A /* libc++.tbd */,
 				9EAF6FEBF847409AB9CB8706 /* libz.tbd */,
+				A1ARKIT0000000000000005 /* ARKit.framework */,
+				A1ARKIT0000000000000006 /* AVFoundation.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -943,6 +947,17 @@
 				A10000020000000100000013 /* ARKit.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A1ARKIT0000000000000020 /* arkit */ = {
+			isa = PBXGroup;
+			children = (
+				A1ARKIT0000000000000001 /* SCARTypes.h */,
+				A1ARKIT0000000000000002 /* SCARTypes.m */,
+				A1ARKIT0000000000000003 /* SCARKitSession.h */,
+				A1ARKIT0000000000000004 /* SCARKitSession.mm */,
+			);
+			path = arkit;
 			sourceTree = "<group>";
 		};
 		A6E62A3C4E044080AC92F143 /* ext */ = {
@@ -1343,6 +1358,33 @@
 			path = Compiler;
 			sourceTree = "<group>";
 		};
+		F6D8637430149D4B00362330 /* GL */ = {
+			isa = PBXGroup;
+			children = (
+				B1E435FA4CD44056A1DC35E8 /* SCRenderer.h */,
+				7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */,
+				31739F52BBE543F48776DC84 /* SCRendererData.h */,
+				8674B3AB76BF4D27A049B2B4 /* SCRendererData.cpp */,
+				0C8B75AC12694C65B72D36E0 /* animation.h */,
+				1B4A856417284C869F0E21D1 /* animation.cpp */,
+				FA404718B97B44ADBE24CAE8 /* model.h */,
+				A501272449384F33B1C93724 /* mesh.h */,
+				ED9274211CE34B6FA3ED379D /* Camera.h */,
+				FCDE3ED576FB4926A87657BD /* shader.h */,
+				6EE6E50E43FE463BB6E23DD8 /* gl_platform.h */,
+			);
+			path = GL;
+			sourceTree = "<group>";
+		};
+		F6D8637530149DAE00362330 /* ocpp */ = {
+			isa = PBXGroup;
+			children = (
+				B17D41794E0C473B9AE0983B /* GameViewController.h */,
+				1059502749CE47029A362E0B /* GameViewController.mm */,
+			);
+			path = ocpp;
+			sourceTree = "<group>";
+		};
 		F95781FDEEA14FD9AD44D122 /* gtc */ = {
 			isa = PBXGroup;
 			children = (
@@ -1465,6 +1507,8 @@
 				853D2509691E4E29A33B3B47 /* AppDelegate.m in Sources */,
 				E649036B476D4116A5B7D3CB /* GameViewController.mm in Sources */,
 				50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */,
+				A1ARKIT0000000000000010 /* SCARTypes.m in Sources */,
+				A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */,
 				17D1891E024A4B69B00F95F7 /* glm.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1521,8 +1565,8 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit",
+					"$(PROJECT_DIR)/ARKit/arkit",
 					"$(PROJECT_DIR)/ARKit/libs",
-					"$(PROJECT_DIR)/ARKit/libs/glm",
 					"$(PROJECT_DIR)/ARKit/assimp/include",
 				);
 				INFOPLIST_FILE = ARKit/other/Info.plist;
@@ -1557,8 +1601,8 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit",
+					"$(PROJECT_DIR)/ARKit/arkit",
 					"$(PROJECT_DIR)/ARKit/libs",
-					"$(PROJECT_DIR)/ARKit/libs/glm",
 					"$(PROJECT_DIR)/ARKit/assimp/include",
 				);
 				INFOPLIST_FILE = ARKit/other/Info.plist;

@@ -29,6 +29,8 @@
 		<string>opengles-3</string>
 		<string>armv7</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>用于 ARKit 面部与身体追踪，输出头部、身体与面部数据。</string>
 	<key>UIStatusBarHidden</key>
 	<true/>
 	<key>UISupportedInterfaceOrientations</key>

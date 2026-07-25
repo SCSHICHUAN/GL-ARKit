@@ -1,8 +1,6 @@
 # GL-ARKit
 
-基于 **OpenGL ES 3** 的 iOS 演示工程：加载带骨骼动画的 FBX 模型（狼），并在屏幕上实时渲染与交互。
-
-> 工程名含 “ARKit”，实际**未使用** Apple ARKit 框架，而是桌面端 OpenGL（GLFW）场景逻辑移植到 iOS（EAGL / `CAEAGLLayer`）。
+基于 **OpenGL ES 3** 的 iOS 演示工程：加载带骨骼动画的 FBX 模型（狼），并叠加 **Apple ARKit** 追踪（当前仅输出头/身/脸数据，尚未驱动模型）。
 
 ## 功能
 
@@ -14,7 +12,12 @@
   - 单指拖动：旋转模型朝向
   - 双指捏合：缩放视野（FOV）
 - **光照**：点光源 + 灯立方体示意，Blinn-Phong 风格着色
-- **横竖屏自适应**：framebuffer 随视图尺寸重建
+- **ARKit 追踪（dump）**
+  - **Face 模式**（前置 TrueDepth）：头部位姿 + 面部 blendShapes + 脸部网格顶点数
+  - **Body 模式**（后置摄像头）：身体骨骼关节 + 头部关节
+  - Face / Body 不能同时跑（前后摄像头冲突）；用 `AR:Face` / `AR:Body` 按钮切换
+  - 控制台约 0.5s 打一次完整日志；屏幕底部绿色标签显示摘要
+  - **尚未与狼模型联动**
 
 ## 工程结构
 
@@ -23,50 +26,49 @@ GL-ARKit/
 ├── ARKit.xcodeproj/          # Xcode 工程
 ├── README.md
 └── ARKit/                    # 源码与资源
+    ├── arkit/                # Apple ARKit 模块（与 GL 模型解耦）
+    │   ├── SCARTypes.*       # Head / Body / Face 数据结构
+    │   └── SCARKitSession.*  # ARSession：Face / Body 配置与日志输出
     ├── other/                # App 入口与配置
     │   ├── main.m
     │   ├── AppDelegate.*
-    │   ├── Info.plist
+    │   ├── Info.plist        # 含 NSCameraUsageDescription
     │   └── Assets.xcassets
-    ├── GameViewController.*  # UI：嵌入 GL 视图 + 控制按钮/动画列表
+    ├── GameViewController.*  # UI：GL 视图 + 控制 + AR dump
     ├── SCRenderer.*          # ObjC++：EAGL 上下文、CADisplayLink、手势转发
-    ├── SCRendererData.*      # C++：场景 init / update / render（原 GLFW main 逻辑）
-    ├── model.h               # Assimp 模型、网格、骨骼、动画列表
-    ├── mesh.h                # VBO/VAO、顶点属性（含骨索引与权重）
-    ├── animation.h/.cpp      # Bone / Animation / Animator
-    ├── shader.h              # 着色器编译与 uniform
-    ├── Camera.h              # 自由相机
-    ├── gl_platform.h         # iOS → GLES3，其它平台 → Glad
-    ├── shaders/              # GLSL ES 着色器
-    │   ├── colors-vs.vs / colors-fs.fs   # 模型 + 光照
-    │   └── lamp-vs.vs / lamp-fs.fs       # 灯立方体
-    ├── Wolf-fbx/             # 示例模型与纹理
-    ├── assimp/               # Assimp 头文件与 iOS 库
-    └── libs/
-        ├── glm/              # 数学库
-        └── stb_image.h       # 贴图解码
+    ├── SCRendererData.*      # C++：场景 init / update / render
+    ├── model.h / mesh.h / animation.* / shader.h / Camera.h
+    ├── gl_platform.h
+    ├── shaders/
+    ├── Wolf-fbx/
+    ├── assimp/
+    └── libs/                 # glm、stb_image
 ```
 
 ## 分层说明
 
 | 层 | 职责 |
 |----|------|
-| `GameViewController` | 纯 UI：动画 CollectionView、Pause、移动摇杆；调用 `SCRenderer` API |
-| `SCRenderer` | OpenGL ES 视图：创建缓冲区、`CADisplayLink` 渲染循环、触摸/捏合 → `SCRendererData` |
-| `SCRendererData` | C++ 场景核心：加载资源、相机、动画状态机、每帧 update/render |
+| `GameViewController` | UI + 启动 `SCARKitSession`；显示 AR 摘要，不改模型 |
+| `arkit/SCARKitSession` | Apple ARKit Face / Body；回调与 NSLog 输出 |
+| `SCRenderer` | OpenGL ES 视图与渲染循环 |
+| `SCRendererData` | C++ 场景核心 |
 | `Model` / `Mesh` / `Animation` | 资源与骨骼动画管线 |
 
 ## 运行
 
 1. 用 Xcode 打开 `ARKit.xcodeproj`
-2. 选择真机或模拟器（需支持 **OpenGL ES 3**）
-3. Build & Run
+2. **真机**运行（ARKit Face / Body 模拟器基本不可用）
+   - Face：带 TrueDepth 的 iPhone（如 X 及以后多数机型）
+   - Body：A12 及以上芯片
+3. 授权相机后，看 Xcode 控制台 `[ARKit …]` 日志与屏幕底部摘要
 
 ## 依赖
 
 | 库 | 用途 |
 |----|------|
 | OpenGL ES 3 | 渲染 |
+| ARKit | 面部 / 身体追踪 |
 | Assimp | FBX / 骨骼 / 动画导入 |
 | GLM | 矩阵与向量 |
 | stb_image | 纹理加载 |
@@ -77,6 +79,7 @@ GL-ARKit/
 |------|------|
 | 顶部动画条目 | 播放对应剪辑 |
 | Pause | 暂停 / 继续动画 |
+| AR:Face / AR:Body | 切换追踪模式并输出对应数据 |
 | W A S D / Up / Dn | 相机移动 |
 | 单指拖动 | 旋转模型 |
 | 双指捏合 | 缩放视野 |
