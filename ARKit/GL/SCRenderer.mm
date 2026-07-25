@@ -8,6 +8,8 @@
 #import <OpenGLES/ES3/gl.h>
 #import <OpenGLES/ES3/glext.h>
 #include "SCRendererData.h"
+#include <map>
+#include <string>
 
 // OpenGLES / EAGL still used intentionally; silence iOS 12+ deprecation.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -180,14 +182,23 @@
 
 - (void)onPan:(UIPanGestureRecognizer *)gr {
     if (!self.data) return;
-    CGPoint p = [gr locationInView:self];
+    // Use translation deltas — more stable than absolute location for pitch/yaw.
     CGFloat scale = self.contentScaleFactor;
-    float x = (float)(p.x * scale);
-    float y = (float)(p.y * scale);
     if (gr.state == UIGestureRecognizerStateBegan) {
-        self.data->onTouchBegan(x, y);
+        CGPoint p = [gr locationInView:self];
+        self.data->onTouchBegan((float)(p.x * scale), (float)(p.y * scale));
+        [gr setTranslation:CGPointZero inView:self];
     } else if (gr.state == UIGestureRecognizerStateChanged) {
+        CGPoint t = [gr translationInView:self];
+        CGPoint p = [gr locationInView:self];
+        // Feed previous point + delta via began/moved convention:
+        float x = (float)(p.x * scale);
+        float y = (float)(p.y * scale);
+        float prevX = x - (float)(t.x * scale);
+        float prevY = y - (float)(t.y * scale);
+        self.data->onTouchBegan(prevX, prevY);
         self.data->onTouchMoved(x, y);
+        [gr setTranslation:CGPointZero inView:self];
     } else {
         self.data->onTouchEnded();
     }
@@ -238,6 +249,58 @@
 
 - (void)toggleAnimPause {
     if (self.data) self.data->toggleAnimPause();
+}
+
+- (NSArray<NSString *> *)modelNames {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    if (!self.data) return names;
+    const int n = self.data->modelCount();
+    for (int i = 0; i < n; ++i) {
+        std::string raw = self.data->modelNameAt(i);
+        [names addObject:raw.empty() ? [NSString stringWithFormat:@"Model %d", i]
+                                     : [NSString stringWithUTF8String:raw.c_str()]];
+    }
+    return names;
+}
+
+- (NSInteger)currentModelIndex {
+    return self.data ? (NSInteger)self.data->currentModelIndex() : 0;
+}
+
+- (BOOL)loadModelAtIndex:(NSInteger)index {
+    if (!self.data) return NO;
+    return self.data->loadModelAtIndex((int)index) ? YES : NO;
+}
+
+static std::map<std::string, float> SCMapFromWeightDict(NSDictionary<NSString *, NSNumber *> *dict) {
+    std::map<std::string, float> out;
+    if (!dict) return out;
+    for (NSString *key in dict) {
+        NSNumber *val = dict[key];
+        if (!key || !val) continue;
+        out[std::string(key.UTF8String)] = val.floatValue;
+    }
+    return out;
+}
+
+- (void)applyFaceProjectionHeadYaw:(float)yaw
+                             pitch:(float)pitch
+                              roll:(float)roll
+                       eyePitchLeft:(float)eyePitchL
+                         eyeYawLeft:(float)eyeYawL
+                      eyePitchRight:(float)eyePitchR
+                        eyeYawRight:(float)eyeYawR
+                        eyeWeights:(NSDictionary<NSString *, NSNumber *> *)eyeWeights
+                       faceWeights:(NSDictionary<NSString *, NSNumber *> *)faceWeights {
+    if (!self.data) return;
+    self.data->applyFaceDrive(yaw, pitch, roll,
+                              eyePitchL, eyeYawL, eyePitchR, eyeYawR,
+                              SCMapFromWeightDict(eyeWeights),
+                              SCMapFromWeightDict(faceWeights));
+}
+
+- (void)clearFaceDrive {
+    if (self.data) self.data->clearFaceDrive();
 }
 
 @end

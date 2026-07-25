@@ -19,12 +19,194 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
+#include <dirent.h>
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 using namespace std;
+
+struct CatalogEntry {
+    std::string name;
+    std::string relativePath; // under resourceRoot / bundle
+    float scale = 1.0f;
+    float yOffset = -0.5f;
+    float xOffset = 0.0f;
+    float defaultYawDeg = 0.0f; // initial left-right facing
+};
+
+static std::string toLowerCopy(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+static bool hasLoadableModelExt(const std::string& nameLower) {
+    // .blend intentionally excluded — iOS Assimp almost never loads it (was causing black screen).
+    static const char* kExts[] = {
+        ".glb", ".gltf", ".fbx", ".obj", ".dae", nullptr
+    };
+    for (int i = 0; kExts[i]; ++i) {
+        const char* e = kExts[i];
+        const size_t n = strlen(e);
+        if (nameLower.size() >= n &&
+            nameLower.compare(nameLower.size() - n, n, e) == 0)
+            return true;
+    }
+    return false;
+}
+
+/// Lower is better.
+static int modelExtPriority(const std::string& nameLower) {
+    if (nameLower.size() >= 4 && nameLower.compare(nameLower.size() - 4, 4, ".glb") == 0) return 0;
+    if (nameLower.size() >= 5 && nameLower.compare(nameLower.size() - 5, 5, ".gltf") == 0) return 1;
+    if (nameLower.size() >= 4 && nameLower.compare(nameLower.size() - 4, 4, ".fbx") == 0) return 2;
+    if (nameLower.size() >= 4 && nameLower.compare(nameLower.size() - 4, 4, ".obj") == 0) return 3;
+    if (nameLower.size() >= 4 && nameLower.compare(nameLower.size() - 4, 4, ".dae") == 0) return 4;
+    return 100;
+}
+
+static std::string prettyModelName(const std::string& folderOrStem) {
+    std::string s = folderOrStem;
+    // "Wolf-fbx" → "Wolf"
+    auto dash = s.find('-');
+    if (dash != std::string::npos) s = s.substr(0, dash);
+    if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
+    return s;
+}
+
+static bool pathEndsWithExt(const std::string& pathLower, const char* ext) {
+    const size_t n = strlen(ext);
+    return pathLower.size() >= n && pathLower.compare(pathLower.size() - n, n, ext) == 0;
+}
+
+/// 按文件格式设默认摆放（不再按模型名特判；已删模型的名字分支一并去掉）
+static void applyFormatLayout(CatalogEntry& e) {
+    const std::string path = toLowerCopy(e.relativePath);
+    if (pathEndsWithExt(path, ".fbx")) {
+        // FBX：常见游戏单位（如 Wolf）
+        e.scale = 0.018f;
+        e.yOffset = -0.7f;
+        e.xOffset = 0.0f;
+        e.defaultYawDeg = 60.0f;
+    } else if (pathEndsWithExt(path, ".glb") || pathEndsWithExt(path, ".gltf")) {
+        // glTF：米制人模；扶正后默认正面，略下移/右移进画面中心
+        e.scale = 1.0f;
+        e.yOffset = -1.0f;
+        e.xOffset = 0.1f;
+        e.defaultYawDeg = 0.0f;
+    } else {
+        // obj/dae 等
+        e.scale = 1.0f;
+        e.yOffset = -0.5f;
+        e.xOffset = 0.0f;
+        e.defaultYawDeg = 180.0f;
+    }
+}
+
+static void collectModelFiles(const std::string& absDir,
+                              const std::string& relDir,
+                              std::vector<std::pair<int, std::string>>& out) {
+    DIR* d = opendir(absDir.c_str());
+    if (!d) return;
+    while (dirent* ent = readdir(d)) {
+        const char* n = ent->d_name;
+        if (!n || n[0] == '.') continue;
+        std::string abs = absDir + "/" + n;
+        std::string rel = relDir.empty() ? n : (relDir + "/" + n);
+        struct stat st {};
+        if (stat(abs.c_str(), &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            collectModelFiles(abs, rel, out);
+        } else if (S_ISREG(st.st_mode)) {
+            std::string lower = toLowerCopy(n);
+            if (hasLoadableModelExt(lower))
+                out.push_back({ modelExtPriority(lower), rel });
+        }
+    }
+    closedir(d);
+}
+
+/// FBX 优先（当前仅 Wolf），其余按名字
+static int catalogSortKey(const CatalogEntry& e) {
+    const std::string path = toLowerCopy(e.relativePath);
+    if (pathEndsWithExt(path, ".fbx")) return 0;
+    if (pathEndsWithExt(path, ".glb") || pathEndsWithExt(path, ".gltf")) return 1;
+    return 10;
+}
+
+/// Prefer bundle models/ (synced from ARKit/models). Fallback to legacy flat copy paths.
+static std::vector<CatalogEntry> scanBundledModels(const std::string& resourceRoot) {
+    std::vector<CatalogEntry> catalog;
+    const std::string modelsAbs = resourceRoot + "/models";
+    struct stat st {};
+    if (stat(modelsAbs.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+        DIR* d = opendir(modelsAbs.c_str());
+        if (d) {
+            std::vector<std::string> entries;
+            while (dirent* ent = readdir(d)) {
+                const char* n = ent->d_name;
+                if (!n || n[0] == '.') continue;
+                entries.push_back(n);
+            }
+            closedir(d);
+            std::sort(entries.begin(), entries.end());
+
+            for (const std::string& name : entries) {
+                std::string abs = modelsAbs + "/" + name;
+                std::string relBase = "models/" + name;
+                struct stat est {};
+                if (stat(abs.c_str(), &est) != 0) continue;
+
+                CatalogEntry e;
+                if (S_ISDIR(est.st_mode)) {
+                    std::vector<std::pair<int, std::string>> files;
+                    collectModelFiles(abs, relBase, files);
+                    if (files.empty()) {
+                        printf("[Model] skip folder (no loadable mesh, need .glb/.fbx/…): %s\n",
+                               name.c_str());
+                        continue;
+                    }
+                    std::sort(files.begin(), files.end());
+                    e.name = prettyModelName(name);
+                    e.relativePath = files.front().second;
+                } else if (S_ISREG(est.st_mode) && hasLoadableModelExt(toLowerCopy(name))) {
+                    e.name = prettyModelName(name.substr(0, name.find_last_of('.')));
+                    e.relativePath = relBase;
+                } else {
+                    continue;
+                }
+                applyFormatLayout(e);
+                printf("[Model] catalog: %s → %s (scale=%.4f y=%.2f x=%.2f yaw=%.0f)\n",
+                       e.name.c_str(), e.relativePath.c_str(),
+                       e.scale, e.yOffset, e.xOffset, e.defaultYawDeg);
+                catalog.push_back(std::move(e));
+            }
+        }
+    }
+
+    if (catalog.empty()) {
+        // Legacy fallback（仅保留仍存在的 Wolf FBX）
+        printf("[Model] models/ missing — using legacy Wolf path\n");
+        CatalogEntry wolf;
+        wolf.name = "Wolf";
+        wolf.relativePath = "Wolf-fbx/Wolf_One_fbx7.4_binary.fbx";
+        applyFormatLayout(wolf);
+        catalog.push_back(std::move(wolf));
+    }
+
+    std::stable_sort(catalog.begin(), catalog.end(),
+                     [](const CatalogEntry& a, const CatalogEntry& b) {
+                         const int ka = catalogSortKey(a), kb = catalogSortKey(b);
+                         if (ka != kb) return ka < kb;
+                         return a.name < b.name;
+                     });
+    return catalog;
+}
 
 struct SCRendererData::Impl {
     // settings / camera — 与 main.cpp 一致
@@ -61,6 +243,22 @@ struct SCRendererData::Impl {
     int screenWidth = 1000;
     int screenHeight = 750;
     std::string resourceRoot;
+    std::vector<CatalogEntry> catalog;
+
+    int currentModelIndex = 0;
+    float modelScale = 0.018f;
+    float modelYOffset = -0.7f;
+    float modelXOffset = 0.0f;
+    /// 把文件里的「头→脚」对齐到世界 +Y，并绕该中轴线左右转
+    glm::mat4 modelBasis{1.0f};
+    glm::vec3 modelAxisPivot{0.0f};
+    bool modelHasAxisPivot = false;
+    bool faceDriveWarnedNoHead = false;
+
+    bool faceDriveActive = false;
+    float arHeadYaw = 0.0f;
+    float arHeadPitch = 0.0f;
+    float arHeadRoll = 0.0f;
 
     bool moveForward = false, moveBackward = false, moveLeft = false;
     bool moveRight = false, moveUp = false, moveDown = false;
@@ -69,9 +267,33 @@ struct SCRendererData::Impl {
         : camera(glm::vec3(0.0f, 1.6f, 2.8f), glm::vec3(0.0f, 1.0f, 0.0f), -88.0f, -30.0f)
     {}
 
-    ~Impl() {
+    void destroyCurrentModel() {
         delete animator;
-        delete ourModel;
+        animator = nullptr;
+        gAnimator = nullptr;
+        if (ourModel) {
+            for (Animation* a : ourModel->animations) delete a;
+            ourModel->animations.clear();
+            ourModel->animation = nullptr;
+            delete ourModel;
+            ourModel = nullptr;
+        }
+        gModel = nullptr;
+        gSelectedAnimIndex = -1;
+        gIdleAnimIndex = 0;
+        gActionAnimIndex = -1;
+        gStandAnimIndex = -1;
+        gSitAnimIndex = -1;
+        gExtraAnimKeySlots.clear();
+        gBrowseAnimIndex = 0;
+        faceDriveWarnedNoHead = false;
+        modelHasAxisPivot = false;
+        modelAxisPivot = glm::vec3(0.0f);
+        modelBasis = glm::mat4(1.0f);
+    }
+
+    ~Impl() {
+        destroyCurrentModel();
         delete ourShader;
         delete lightCubeShader;
         if (cubeVAO) glDeleteVertexArrays(1, &cubeVAO);
@@ -176,6 +398,10 @@ struct SCRendererData::Impl {
         if (!gModel || !gAnimator) return;
         Animation* a = gModel->getAnimation(idx);
         if (!a) return;
+        // 手动切动画时退出 Face 驱动，恢复播放
+        faceDriveActive = false;
+        gAnimPaused = false;
+        gAnimator->clearBoneLocalOverrides();
         gAnimator->setLooping(loop);
         gAnimator->playAnimation(a, true);
         gEnableAnimation = true;
@@ -215,6 +441,7 @@ bool SCRendererData::init(const std::string& resourceRoot, int width, int height
     impl_->screenHeight = height;
     impl_->lastX = width / 2.0f;
     impl_->lastY = height / 2.0f;
+    impl_->catalog = scanBundledModels(resourceRoot);
 
     impl_->createVBOVAO();
 
@@ -223,21 +450,22 @@ bool SCRendererData::init(const std::string& resourceRoot, int width, int height
     std::string lampFs = resourceRoot + "/shaders/lamp-fs.fs";
     std::string colorVs = resourceRoot + "/shaders/colors-vs.vs";
     std::string colorFs = resourceRoot + "/shaders/colors-fs.fs";
-    std::string modelPath = resourceRoot + "/Wolf-fbx/Wolf_One_fbx7.4_binary.fbx";
 
     impl_->lightCubeShader = new Shader(lampVs.c_str(), lampFs.c_str());
     impl_->ourShader = new Shader(colorVs.c_str(), colorFs.c_str());
-    impl_->ourModel = new Model(modelPath);
-    printf("Model loaded, number of meshes: %d\n", impl_->ourModel->getMeshCount());
-    printf("Number of bones in model: %d\n", impl_->ourModel->getBoneCount());
 
-    if (impl_->ourModel->getAnimation()) {
-        impl_->animator = new Animator(impl_->ourModel->getAnimation());
-        impl_->gIdleAnimIndex = impl_->ourModel->getAnimation()->getAnimationIndex();
+    bool loaded = false;
+    for (int i = 0; i < (int)impl_->catalog.size(); ++i) {
+        if (loadModelAtIndex(i)) {
+            loaded = true;
+            break;
+        }
+        printf("[Model] skip unloadable #%d %s\n", i, impl_->catalog[(size_t)i].name.c_str());
     }
-    impl_->gModel = impl_->ourModel;
-    impl_->gAnimator = impl_->animator;
-    impl_->buildAnimKeyMap();
+    if (!loaded) {
+        printf("SCRendererData: no model could be loaded\n");
+        return false;
+    }
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
@@ -265,8 +493,9 @@ void SCRendererData::update(float dt) {
     if (impl_->moveUp)       impl_->camera.ProcessKeyboard(UPWARD, dt);
     if (impl_->moveDown)     impl_->camera.ProcessKeyboard(DOWN, dt);
 
-    if (impl_->animator && impl_->gEnableAnimation && !impl_->gAnimPaused) {
-        impl_->animator->updateAnimation(dt);
+    if (impl_->animator) {
+        const float step = (impl_->gEnableAnimation && !impl_->gAnimPaused) ? dt : 0.0f;
+        impl_->animator->updateAnimation(step);
     }
     if (impl_->animator && impl_->gEnableAnimation && !impl_->gAnimPaused && impl_->animator->isFinished()) {
         if (impl_->gStandAnimIndex != -1 && impl_->gActionAnimIndex == impl_->gStandAnimIndex) {
@@ -322,20 +551,6 @@ void SCRendererData::render() {
     impl_->ourShader->setVec3("viewPos", impl_->camera.Position);
     impl_->ourShader->setFloat("material.shininess", 32.0f);
 
-    if (impl_->animator && impl_->ourModel->getAnimation()) {
-        const int MAX_BONES = 100;
-        glm::mat4 identity(1.0f);
-        for (int i = 0; i < MAX_BONES; ++i) {
-            string uniformName = "finalBonesMatrices[" + to_string(i) + "]";
-            impl_->ourShader->setMat4(uniformName.c_str(), identity);
-        }
-        auto& finalBoneMatrices = impl_->animator->getFinalBoneMatrices();
-        for (auto& entry : finalBoneMatrices) {
-            string uniformName = "finalBonesMatrices[" + to_string(entry.first) + "]";
-            impl_->ourShader->setMat4(uniformName.c_str(), entry.second);
-        }
-    }
-
     impl_->ourShader->setVec3("dirLight.direction", -0.2f, -1.0f, -0.3f);
     impl_->ourShader->setVec3("dirLight.ambient", 1.0f, 1.0f, 1.0f);
     impl_->ourShader->setVec3("dirLight.diffuse", 0.9f, 0.9f, 0.9f);
@@ -376,12 +591,23 @@ void SCRendererData::render() {
     impl_->ourShader->setFloat("spotLight.outerCutOff", glm::cos(glm::radians(15.0f)));
 
     glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(0.0f, -0.7f, 0.0f));
-    model = glm::rotate(model, impl_->gModelYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    // T * R(user) * S * Basis(扶正) * T(-pivot)：左右滑绕头→脚中轴线（世界 Y）
+    model = glm::translate(model, glm::vec3(impl_->modelXOffset, impl_->modelYOffset, 0.0f));
     model = glm::rotate(model, impl_->gModelPitch, glm::vec3(1.0f, 0.0f, 0.0f));
-    model = glm::scale(model, glm::vec3(0.018f));
+    model = glm::rotate(model, impl_->gModelYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::scale(model, glm::vec3(impl_->modelScale));
+    model = model * impl_->modelBasis;
+    if (impl_->modelHasAxisPivot) {
+        model = glm::translate(model, -impl_->modelAxisPivot);
+    }
     impl_->ourShader->setMat4("model", model);
-    impl_->ourModel->Draw(*impl_->ourShader);
+    // 每 mesh 按骨骼调色板上传（支持 facial_animation 等 700+ 骨模型）
+    if (impl_->animator && impl_->ourModel->getAnimation()) {
+        auto& finalBoneMatrices = impl_->animator->getFinalBoneMatrices();
+        impl_->ourModel->Draw(*impl_->ourShader, &finalBoneMatrices);
+    } else {
+        impl_->ourModel->Draw(*impl_->ourShader, nullptr);
+    }
 }
 
 void SCRendererData::onTouchBegan(float x, float y) {
@@ -392,14 +618,14 @@ void SCRendererData::onTouchMoved(float x, float y) {
     if (!impl_) return;
     if (impl_->firstMouse) { impl_->lastX = x; impl_->lastY = y; impl_->firstMouse = false; }
     float xoffset = x - impl_->lastX;
-    float yoffset = y - impl_->lastY; // finger down → pitch down
+    // Screen Y grows downward; finger-up should pitch the head forward/down visually.
+    float yoffset = y - impl_->lastY;
     impl_->lastX = x; impl_->lastY = y;
 
-    // Drag rotates the model only (not camera). Sensitivity in radians / pixel.
-    const float sens = 0.005f;
+    const float sens = 0.008f;
     impl_->gModelYaw   += xoffset * sens;
     impl_->gModelPitch += yoffset * sens;
-    const float pitchLimit = glm::radians(80.0f);
+    const float pitchLimit = glm::radians(89.0f);
     impl_->gModelPitch = std::max(-pitchLimit, std::min(pitchLimit, impl_->gModelPitch));
 }
 void SCRendererData::onTouchEnded() { if (impl_) impl_->firstMouse = true; }
@@ -436,4 +662,428 @@ void SCRendererData::playAnimationAtIndex(int index) {
     impl_->switchAnim(index, true);
     impl_->gBrowseAnimIndex = index;
     impl_->gActionAnimIndex = -1;
+}
+
+int SCRendererData::modelCount() const {
+    return impl_ ? (int)impl_->catalog.size() : 0;
+}
+
+std::string SCRendererData::modelNameAt(int index) const {
+    if (!impl_ || index < 0 || index >= (int)impl_->catalog.size()) return {};
+    return impl_->catalog[(size_t)index].name;
+}
+
+int SCRendererData::currentModelIndex() const {
+    return impl_ ? impl_->currentModelIndex : 0;
+}
+
+bool SCRendererData::loadModelAtIndex(int index) {
+    if (!impl_ || index < 0 || index >= (int)impl_->catalog.size()) return false;
+
+    const CatalogEntry& entry = impl_->catalog[(size_t)index];
+    std::string path = impl_->resourceRoot + "/" + entry.relativePath;
+    printf("[Model] loading %s → %s\n", entry.name.c_str(), path.c_str());
+
+    Model* next = new Model(path);
+    if (next->getMeshCount() <= 0) {
+        printf("[Model] load failed (0 meshes): %s\n", path.c_str());
+        delete next;
+        return false;
+    }
+
+    impl_->destroyCurrentModel();
+    impl_->ourModel = next;
+    impl_->gModel = next;
+    impl_->currentModelIndex = index;
+    impl_->modelScale = entry.scale;
+    impl_->modelYOffset = entry.yOffset;
+    impl_->modelXOffset = entry.xOffset;
+    impl_->modelHasAxisPivot = false;
+    impl_->modelAxisPivot = glm::vec3(0.0f);
+    impl_->modelBasis = glm::mat4(1.0f);
+    impl_->gModelYaw = glm::radians(entry.defaultYawDeg);
+    impl_->gModelPitch = 0.0f;
+    impl_->gAnimPaused = false;
+    impl_->faceDriveWarnedNoHead = false;
+    clearFaceDrive();
+
+    printf("Model loaded: %s meshes=%d bones=%d anims=%d scale=%.4f yOff=%.3f\n",
+           entry.name.c_str(), next->getMeshCount(), next->getBoneCount(), next->getAnimationCount(),
+           impl_->modelScale, impl_->modelYOffset);
+
+    if (next->getAnimation()) {
+        impl_->animator = new Animator(next->getAnimation());
+        impl_->gIdleAnimIndex = next->getAnimation()->getAnimationIndex();
+        impl_->gSelectedAnimIndex = impl_->gIdleAnimIndex;
+        impl_->animator->updateAnimation(0.0f);
+    }
+    impl_->gAnimator = impl_->animator;
+    impl_->buildAnimKeyMap();
+
+    // 扶正：最长边视为头→脚，转到世界 +Y；再把中轴线移到 Y 轴，左右滑才是原地转
+    {
+        const std::map<int, glm::mat4>* bones = nullptr;
+        if (impl_->animator) bones = &impl_->animator->getFinalBoneMatrices();
+
+        auto accumulate = [&](const std::map<int, glm::mat4>* boneMats,
+                              glm::vec3& outMin, glm::vec3& outMax) -> bool {
+            bool any = false;
+            for (const Mesh& mesh : next->meshes) {
+                const bool doSkin = boneMats && !mesh.bonePalette.empty();
+                for (const Vertex& v : mesh.vertices) {
+                    glm::vec3 p = v.Position;
+                    if (doSkin) {
+                        glm::vec4 acc(0.0f);
+                        bool has = false;
+                        for (int i = 0; i < MAX_BONE_INFLUENCE; ++i) {
+                            const int local = (int)v.m_BoneIDs[i];
+                            if (local < 0 || local >= (int)mesh.bonePalette.size()) continue;
+                            const int gid = mesh.bonePalette[local];
+                            auto it = boneMats->find(gid);
+                            const glm::mat4& m = (it != boneMats->end()) ? it->second : glm::mat4(1.0f);
+                            acc += (m * glm::vec4(v.Position, 1.0f)) * v.m_Weights[i];
+                            has = true;
+                        }
+                        if (has) p = glm::vec3(acc);
+                    }
+                    if (!any) { outMin = outMax = p; any = true; }
+                    else {
+                        outMin = glm::min(outMin, p);
+                        outMax = glm::max(outMax, p);
+                    }
+                }
+            }
+            return any;
+        };
+
+        glm::vec3 bmin, bmax;
+        bool ok = accumulate(bones, bmin, bmax);
+        if (bones) {
+            glm::vec3 bindMin, bindMax;
+            if (accumulate(nullptr, bindMin, bindMax)) {
+                const float hBind = std::max(bindMax.y - bindMin.y, 1e-4f);
+                const float hSkin = ok ? (bmax.y - bmin.y) : 0.0f;
+                if (!ok || !std::isfinite(hSkin) || hSkin < hBind * 0.01f || hSkin > hBind * 100.0f) {
+                    bmin = bindMin;
+                    bmax = bindMax;
+                    ok = true;
+                }
+            }
+        }
+        if (ok) {
+            const glm::vec3 c = 0.5f * (bmin + bmax);
+            const glm::vec3 ext = bmax - bmin;
+            int up = 1; // 0=X 1=Y 2=Z
+            if (ext.z >= ext.x && ext.z >= ext.y) up = 2;
+            else if (ext.x >= ext.y && ext.x >= ext.z) up = 0;
+
+            glm::mat4 basis(1.0f);
+            glm::vec3 pivot(0.0f);
+            if (up == 1) {
+                // 已是 Y 朝上：只消 XZ，绕头脚中线转
+                pivot = glm::vec3(c.x, 0.0f, c.z);
+            } else if (up == 2) {
+                // Z 为身高（WhiteMan 常见）：转到 +Y，脚靠近 0 的一端朝下
+                const bool feetAtMaxZ = std::fabs(bmax.z) <= std::fabs(bmin.z);
+                if (feetAtMaxZ) {
+                    // Rx(+90): (x,y,z)->(x,-z,y)，z≈0 → y≈0
+                    basis = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1, 0, 0));
+                } else {
+                    // Rx(-90): (x,y,z)->(x,z,-y)
+                    basis = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1, 0, 0));
+                }
+                pivot = glm::vec3(c.x, c.y, 0.0f);
+            } else {
+                // X 为身高：转到 +Y
+                const bool feetAtMaxX = std::fabs(bmax.x) <= std::fabs(bmin.x);
+                if (feetAtMaxX) {
+                    // Rz(-90): (x,y,z)->(y,-x,z)，x≈0 → 需另一端…
+                    // Rz(+90): (x,y,z)->(-y,x,z) 使 x→y
+                    basis = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
+                } else {
+                    basis = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 0, 1));
+                }
+                pivot = glm::vec3(0.0f, c.y, c.z);
+            }
+
+            impl_->modelBasis = basis;
+            impl_->modelAxisPivot = pivot;
+            impl_->modelHasAxisPivot = true;
+            printf("[Model] upright upAxis=%c pivot=(%.3f,%.3f,%.3f) ext=(%.3f,%.3f,%.3f)\n",
+                   up == 0 ? 'X' : (up == 1 ? 'Y' : 'Z'),
+                   pivot.x, pivot.y, pivot.z, ext.x, ext.y, ext.z);
+        }
+    }
+
+    return true;
+}
+
+static std::string lowerCopy(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+static float weightOr(const std::map<std::string, float>& m, const char* key) {
+    auto it = m.find(key);
+    return it == m.end() ? 0.0f : it->second;
+}
+
+static void addBoneOverrideContaining(std::map<std::string, glm::mat4>& out,
+                                      const std::map<std::string, BoneInfo>& bones,
+                                      const std::string& needle,
+                                      const glm::mat4& xform,
+                                      const char* exclude = nullptr) {
+    const std::string n = lowerCopy(needle);
+    std::string ex = exclude ? lowerCopy(exclude) : "";
+    for (const auto& kv : bones) {
+        std::string bn = lowerCopy(kv.first);
+        if (bn.find(n) == std::string::npos) continue;
+        if (!ex.empty() && bn.find(ex) != std::string::npos) continue;
+        auto it = out.find(kv.first);
+        if (it == out.end()) out[kv.first] = xform;
+        else it->second = it->second * xform;
+    }
+}
+
+void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float headRollRad,
+                                    float eyePitchL, float eyeYawL, float eyePitchR, float eyeYawR,
+                                    const std::map<std::string, float>& eyeWeights,
+                                    const std::map<std::string, float>& faceWeights) {
+    if (!impl_ || !impl_->ourModel) return;
+    impl_->arHeadYaw = headYawRad;
+    impl_->arHeadPitch = headPitchRad;
+    impl_->arHeadRoll = headRollRad;
+
+    if (!impl_->animator) return;
+
+    const auto& bones = impl_->ourModel->getBoneInfoMap();
+    std::map<std::string, glm::mat4> overrides;
+
+    // —— 头：只转 head / 少量 neck，绝不转整模 ——
+    {
+        glm::mat4 headM(1.0f);
+        headM = glm::rotate(headM, headPitchRad, glm::vec3(1, 0, 0));
+        headM = glm::rotate(headM, headYawRad, glm::vec3(0, 1, 0));
+        headM = glm::rotate(headM, headRollRad, glm::vec3(0, 0, 1));
+
+        glm::mat4 neckM(1.0f);
+        neckM = glm::rotate(neckM, headPitchRad * 0.28f, glm::vec3(1, 0, 0));
+        neckM = glm::rotate(neckM, headYawRad * 0.28f, glm::vec3(0, 1, 0));
+        neckM = glm::rotate(neckM, headRollRad * 0.20f, glm::vec3(0, 0, 1));
+
+        bool gotHead = false;
+        for (const auto& kv : bones) {
+            const std::string bn = lowerCopy(kv.first);
+            if (bn.find("wolf3d") != std::string::npos) continue;
+            if (bn.find("head_ref") != std::string::npos) continue;
+            if (bn.find("head_scale") != std::string::npos) continue;
+            // 优先变形头骨 head.x / c_head.x
+            if (bn.find("c_head.x") != std::string::npos || bn.find("head.x") != std::string::npos) {
+                overrides[kv.first] = headM;
+                gotHead = true;
+            }
+        }
+        if (!gotHead) {
+            for (const auto& kv : bones) {
+                const std::string bn = lowerCopy(kv.first);
+                if (bn.find("head") == std::string::npos) continue;
+                if (bn.find("wolf3d") != std::string::npos) continue;
+                if (bn.find("ref") != std::string::npos || bn.find("scale") != std::string::npos) continue;
+                if (bn.find("neck") != std::string::npos) continue;
+                overrides[kv.first] = headM;
+                gotHead = true;
+            }
+        }
+        for (const auto& kv : bones) {
+            const std::string bn = lowerCopy(kv.first);
+            if (bn.find("neck_ref") != std::string::npos) continue;
+            if (bn.find("neck_twist") != std::string::npos) continue;
+            if (bn.find("c_p_neck") != std::string::npos) continue; // 控制器/父空物体
+            if (bn.find("c_neck.x") != std::string::npos || bn.find("neck.x") != std::string::npos ||
+                bn.rfind("neck_", 0) == 0) { // Neck_05 等简骨
+                overrides[kv.first] = neckM;
+            }
+        }
+        if (!gotHead && !impl_->faceDriveWarnedNoHead) {
+            impl_->faceDriveWarnedNoHead = true;
+            printf("[FaceDrive] warning: no head bone found; head pose ignored (not applied to whole body)\n");
+        }
+    }
+
+    // —— 脸部：颌 / 嘴（细表情骨，如 blackMan）——
+    const bool useFaceBones = impl_->ourModel->hasDetailedFaceBones();
+    const float jaw = weightOr(faceWeights, "jawOpen");
+    const float smileL = weightOr(faceWeights, "mouthSmileLeft");
+    const float smileR = weightOr(faceWeights, "mouthSmileRight");
+    const float frownL = weightOr(faceWeights, "mouthFrownLeft");
+    const float frownR = weightOr(faceWeights, "mouthFrownRight");
+    const float pucker = weightOr(faceWeights, "mouthPucker");
+    if (useFaceBones) {
+    if (jaw > 0.001f) {
+        glm::mat4 m = glm::rotate(glm::mat4(1.0f), jaw * 0.55f, glm::vec3(1, 0, 0));
+        addBoneOverrideContaining(overrides, bones, "jawbone", m, "ret");
+        addBoneOverrideContaining(overrides, bones, "c_jawbone", m, "ret");
+    }
+    if (smileL > 0.001f) {
+        glm::mat4 m = glm::rotate(glm::mat4(1.0f), smileL * 0.35f, glm::vec3(0, 0, 1));
+        addBoneOverrideContaining(overrides, bones, "lips_smile.l", m);
+        addBoneOverrideContaining(overrides, bones, "c_lips_smile.l", m);
+    }
+    if (smileR > 0.001f) {
+        glm::mat4 m = glm::rotate(glm::mat4(1.0f), -smileR * 0.35f, glm::vec3(0, 0, 1));
+        addBoneOverrideContaining(overrides, bones, "lips_smile.r", m);
+        addBoneOverrideContaining(overrides, bones, "c_lips_smile.r", m);
+    }
+    if (frownL > 0.001f || frownR > 0.001f) {
+        float f = std::max(frownL, frownR);
+        glm::mat4 m = glm::rotate(glm::mat4(1.0f), -f * 0.25f, glm::vec3(1, 0, 0));
+        addBoneOverrideContaining(overrides, bones, "lips_smile", m);
+    }
+    if (pucker > 0.001f) {
+        glm::mat4 m = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f - pucker * 0.08f, 1.0f, 1.0f + pucker * 0.05f));
+        addBoneOverrideContaining(overrides, bones, "c_lips", m, "smile");
+    }
+    }
+
+    // —— 眼球：与眼皮同一风格——Look 权重直接驱动；只转 ref_track（不碰眼眶父骨）——
+    const float blinkL = weightOr(eyeWeights, "eyeBlinkLeft");
+    const float blinkR = weightOr(eyeWeights, "eyeBlinkRight");
+    const float wideL = weightOr(eyeWeights, "eyeWideLeft");
+    const float wideR = weightOr(eyeWeights, "eyeWideRight");
+    const float squintL = weightOr(eyeWeights, "eyeSquintLeft");
+    const float squintR = weightOr(eyeWeights, "eyeSquintRight");
+
+    // 优先用传入的 pitch/yaw（已与 blink 同步平滑）；若几乎为 0 再从 Look 权重现算
+    float pitch = 0.5f * (eyePitchL + eyePitchR);
+    float yaw = 0.5f * (eyeYawL + eyeYawR);
+    if (fabsf(pitch) + fabsf(yaw) < 0.02f) {
+        const float k = 0.95f;
+        float pL = (weightOr(eyeWeights, "eyeLookUpLeft") - weightOr(eyeWeights, "eyeLookDownLeft")) * k;
+        float pR = (weightOr(eyeWeights, "eyeLookUpRight") - weightOr(eyeWeights, "eyeLookDownRight")) * k;
+        float yL = (weightOr(eyeWeights, "eyeLookInLeft") - weightOr(eyeWeights, "eyeLookOutLeft")) * k;
+        float yR = (weightOr(eyeWeights, "eyeLookOutRight") - weightOr(eyeWeights, "eyeLookInRight")) * k;
+        pitch = 0.5f * (pL + pR);
+        yaw = 0.5f * (yL + yR);
+    }
+    pitch = fmaxf(-0.70f, fminf(0.70f, pitch));
+    yaw = fmaxf(-0.70f, fminf(0.70f, yaw));
+
+    auto eyeLookMat = [](float p, float y) {
+        glm::mat4 m(1.0f);
+        m = glm::rotate(m, p, glm::vec3(1, 0, 0));
+        m = glm::rotate(m, y, glm::vec3(0, 1, 0));
+        return m;
+    };
+    glm::mat4 gaze = eyeLookMat(pitch, yaw);
+
+    auto aiMat = [](const aiMatrix4x4& m) {
+        return glm::mat4(
+            m.a1, m.b1, m.c1, m.d1,
+            m.a2, m.b2, m.c2, m.d2,
+            m.a3, m.b3, m.c3, m.d3,
+            m.a4, m.b4, m.c4, m.d4);
+    };
+    std::map<std::string, glm::mat4> nodeBind;
+    if (impl_->ourModel->getAnimation() && impl_->ourModel->getAnimation()->getScene()) {
+        const aiNode* root = impl_->ourModel->getAnimation()->getScene()->mRootNode;
+        std::vector<const aiNode*> stack;
+        if (root) stack.push_back(root);
+        while (!stack.empty()) {
+            const aiNode* n = stack.back();
+            stack.pop_back();
+            nodeBind[n->mName.C_Str()] = aiMat(n->mTransformation);
+            for (unsigned i = 0; i < n->mNumChildren; ++i) stack.push_back(n->mChildren[i]);
+        }
+    }
+
+    // 绕眼窝：T * gaze * RS（完整局部，Animator 里 replace）
+    auto orbitGaze = [&](const glm::mat4& bind) {
+        glm::mat4 rs = bind;
+        rs[3] = glm::vec4(0, 0, 0, 1);
+        return glm::translate(glm::mat4(1.0f), glm::vec3(bind[3])) * gaze * rs;
+    };
+
+    for (const auto& kv : bones) {
+        const std::string bn = lowerCopy(kv.first);
+        if (bn.find("_end") != std::string::npos) continue;
+        if (bn.find("c_eye_ref_track") == std::string::npos) continue;
+        auto bit = nodeBind.find(kv.first);
+        if (bit == nodeBind.end()) continue;
+        overrides[kv.first] = orbitGaze(bit->second);
+    }
+
+    // whiteMan 等简骨：LeftEye_00 / RightEye_07 / Left_Eye
+    if (!useFaceBones) {
+        for (const auto& kv : bones) {
+            const std::string bn = lowerCopy(kv.first);
+            if (bn.find("lid") != std::string::npos) continue;
+            if (bn.find("brow") != std::string::npos) continue;
+            if (bn.find("_end") != std::string::npos) continue;
+            const bool left = (bn.find("lefteye") != std::string::npos || bn.find("left_eye") != std::string::npos);
+            const bool right = (bn.find("righteye") != std::string::npos || bn.find("right_eye") != std::string::npos);
+            if (!left && !right) continue;
+            auto bit = nodeBind.find(kv.first);
+            if (bit == nodeBind.end()) continue;
+            overrides[kv.first] = orbitGaze(bit->second);
+        }
+    }
+
+    // —— 眨眼（细眼皮骨）——
+    if (useFaceBones) {
+    auto applyEyelid = [&](bool left, float blink, float squint, float wide) {
+        float close = fminf(1.0f, blink + squint * 0.45f);
+        float open = wide * 0.20f;
+        float topAmt = -(close * 0.65f) + open;
+        float botAmt = (close * 0.40f) - open * 0.25f;
+        if (fabsf(topAmt) < 0.0005f && fabsf(botAmt) < 0.0005f) return;
+        glm::mat4 top = glm::rotate(glm::mat4(1.0f), topAmt, glm::vec3(1, 0, 0));
+        glm::mat4 bot = glm::rotate(glm::mat4(1.0f), botAmt, glm::vec3(1, 0, 0));
+        const char* side = left ? ".l" : ".r";
+        for (const auto& kv : bones) {
+            const std::string bn = lowerCopy(kv.first);
+            if (bn.find(side) == std::string::npos) continue;
+            if (bn.find("end") != std::string::npos) continue;
+            if (bn.find("ref") != std::string::npos) continue;
+            if (bn.find("c_eyelid_top") != std::string::npos) overrides[kv.first] = top;
+            else if (bn.find("c_eyelid_bot") != std::string::npos) overrides[kv.first] = bot;
+        }
+    };
+    applyEyelid(true, blinkL, squintL, wideL);
+    applyEyelid(false, blinkR, squintR, wideR);
+    }
+
+    // —— Morph：whiteMan 等无细脸骨时用 ARKit 权重驱动 ——
+    bool appliedMorphs = false;
+    if (!useFaceBones && impl_->ourModel->hasMorphTargets()) {
+        std::map<std::string, float> allW = faceWeights;
+        for (const auto& kv : eyeWeights) allW[kv.first] = kv.second;
+        // 也写入 Look 权重（若模型有 52 morph）；44 目标会自动忽略
+        impl_->ourModel->setMorphWeightsByName(allW);
+        appliedMorphs = true;
+    }
+
+    // 当前模型没有可驱动的脸/头骨/morph（如 Wolf）：不暂停内置动画
+    if (overrides.empty() && !appliedMorphs) {
+        impl_->faceDriveActive = false;
+        impl_->animator->clearBoneLocalOverrides();
+        return;
+    }
+
+    impl_->faceDriveActive = true;
+    // 有表情骨骼/morph 时才暂停内置动画，避免和覆盖互抢
+    impl_->gAnimPaused = true;
+    impl_->animator->setBoneLocalOverrides(overrides);
+}
+
+void SCRendererData::clearFaceDrive() {
+    if (!impl_) return;
+    impl_->faceDriveActive = false;
+    impl_->arHeadYaw = impl_->arHeadPitch = impl_->arHeadRoll = 0.0f;
+    impl_->gAnimPaused = false;
+    if (impl_->ourModel) impl_->ourModel->clearMorphWeights();
+    if (impl_->animator) impl_->animator->clearBoneLocalOverrides();
+}
+
+bool SCRendererData::isFaceDriveActive() const {
+    return impl_ && impl_->faceDriveActive;
 }

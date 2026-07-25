@@ -24,6 +24,7 @@
 		A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000004 /* SCARKitSession.mm */; };
 		A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000005 /* ARKit.framework */; };
 		A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000006 /* AVFoundation.framework */; };
+		A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000008 /* SCARFaceProjector.m */; };
 		A2FCCBD4B989469D8620780F /* Wolf_Eyes_1.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = A35928BD29E8469F930951E1 /* Wolf_Eyes_1.jpg */; };
 		AABEFF57A9AE45078658E784 /* animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1B4A856417284C869F0E21D1 /* animation.cpp */; };
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
@@ -433,6 +434,8 @@
 		A1ARKIT0000000000000004 /* SCARKitSession.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = SCARKitSession.mm; sourceTree = "<group>"; };
 		A1ARKIT0000000000000005 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
 		A1ARKIT0000000000000006 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		A1ARKIT0000000000000007 /* SCARFaceProjector.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARFaceProjector.h; sourceTree = "<group>"; };
+		A1ARKIT0000000000000008 /* SCARFaceProjector.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARFaceProjector.m; sourceTree = "<group>"; };
 		A1F79938864F4570805DEFEE /* type_vec1.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_vec1.inl; sourceTree = "<group>"; };
 		A29164DF5D7F4D1DB3F792B9 /* color4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = color4.h; sourceTree = "<group>"; };
 		A34C55A972EE4ABEABFBE482 /* vector_float3_precision.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_float3_precision.hpp; sourceTree = "<group>"; };
@@ -614,6 +617,8 @@
 		F4BDA50DA4D34766AD038E68 /* projection.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = projection.hpp; sourceTree = "<group>"; };
 		F4D904CBCB4B4E9FABF6F9DE /* matrix_int2x4.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = matrix_int2x4.hpp; sourceTree = "<group>"; };
 		F6C0D903FFB544E8960FE02C /* matrix_decompose.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = matrix_decompose.inl; sourceTree = "<group>"; };
+		F6D863A03014DD2300362330 /* whiteMan.glb */ = {isa = PBXFileReference; lastKnownFileType = file; path = whiteMan.glb; sourceTree = "<group>"; };
+		F6D863A13014DFC000362330 /* blackMan.glb */ = {isa = PBXFileReference; lastKnownFileType = file; path = blackMan.glb; sourceTree = "<group>"; };
 		F71CCB474A3146C1BA298D3A /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
 		F72E3487E8D94F5E8E54660C /* vector_double3_precision.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_double3_precision.hpp; sourceTree = "<group>"; };
 		F74D4F0DB697457687389ADF /* vector_float4.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_float4.hpp; sourceTree = "<group>"; };
@@ -914,6 +919,7 @@
 		A10000040000000100000002 /* ARKit */ = {
 			isa = PBXGroup;
 			children = (
+				F6D863763014BA2A00362330 /* models */,
 				F6D8637530149DAE00362330 /* ocpp */,
 				F6D8637430149D4B00362330 /* GL */,
 				A1ARKIT0000000000000020 /* arkit */,
@@ -921,7 +927,6 @@
 				4DC45F3A999A46C68D9EFA47 /* assimp */,
 				8B79B6C380BC4CF69F003FA5 /* libs */,
 				5F43A1C12BB5457FB0F7C274 /* shaders */,
-				71EF47DBC822408AA2300802 /* Wolf-fbx */,
 			);
 			path = ARKit;
 			sourceTree = "<group>";
@@ -956,6 +961,8 @@
 				A1ARKIT0000000000000002 /* SCARTypes.m */,
 				A1ARKIT0000000000000003 /* SCARKitSession.h */,
 				A1ARKIT0000000000000004 /* SCARKitSession.mm */,
+				A1ARKIT0000000000000007 /* SCARFaceProjector.h */,
+				A1ARKIT0000000000000008 /* SCARFaceProjector.m */,
 			);
 			path = arkit;
 			sourceTree = "<group>";
@@ -1385,6 +1392,16 @@
 			path = ocpp;
 			sourceTree = "<group>";
 		};
+		F6D863763014BA2A00362330 /* models */ = {
+			isa = PBXGroup;
+			children = (
+				F6D863A13014DFC000362330 /* blackMan.glb */,
+				F6D863A03014DD2300362330 /* whiteMan.glb */,
+				71EF47DBC822408AA2300802 /* Wolf-fbx */,
+			);
+			path = models;
+			sourceTree = "<group>";
+		};
 		F95781FDEEA14FD9AD44D122 /* gtc */ = {
 			isa = PBXGroup;
 			children = (
@@ -1443,6 +1460,7 @@
 				A10000030000000100000004 /* CopyShaders */,
 				A10000030000000100000005 /* CopyWolf */,
 				A10000030000000100000006 /* CopyWolfTex */,
+				A10000030000000100000007 /* CopyModels */,
 			);
 			buildRules = (
 			);
@@ -1496,6 +1514,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		A10000030000000100000007 /* CopyModels */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = CopyModels;
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "SRC=\"${SRCROOT}/ARKit/models\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/models\"\nif [ ! -d \"$SRC\" ]; then\n  echo \"warning: models folder missing: $SRC\"\n  exit 0\nfi\nmkdir -p \"$DST\"\nrsync -a --delete --exclude '*.blend' --exclude '*.py' --exclude '.*' \"$SRC/\" \"$DST/\"\necho \"[CopyModels] $SRC -> $DST\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A10000030000000100000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -1509,6 +1549,7 @@
 				50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */,
 				A1ARKIT0000000000000010 /* SCARTypes.m in Sources */,
 				A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */,
+				A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */,
 				17D1891E024A4B69B00F95F7 /* glm.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1565,6 +1606,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit",
+					"$(PROJECT_DIR)/ARKit/GL",
 					"$(PROJECT_DIR)/ARKit/arkit",
 					"$(PROJECT_DIR)/ARKit/libs",
 					"$(PROJECT_DIR)/ARKit/assimp/include",
@@ -1601,6 +1643,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit",
+					"$(PROJECT_DIR)/ARKit/GL",
 					"$(PROJECT_DIR)/ARKit/arkit",
 					"$(PROJECT_DIR)/ARKit/libs",
 					"$(PROJECT_DIR)/ARKit/assimp/include",

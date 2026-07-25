@@ -24,7 +24,7 @@ uniform mat4 view;
 uniform mat4 projection;
 
 const int MAX_BONES = 100;
-uniform mat4 finalBonesMatrices[MAX_BONES]; // CPU 按 currentTime 算好的蒙皮矩阵
+uniform mat4 finalBonesMatrices[MAX_BONES]; // 每 mesh 骨骼调色板（local id），非全局骨 id
 
 void main()
 {

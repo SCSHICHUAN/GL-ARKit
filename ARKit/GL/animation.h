@@ -107,14 +107,19 @@ private:
     float deltaTime;
     map<int, glm::mat4> finalBoneMatrices; // 下标=骨骼id，CPU 算好的蒙皮矩阵
     bool looping;
+    /// 额外局部变换（叠在动画/绑定位姿之后），用于 ARKit 表情 → 骨骼
+    map<string, glm::mat4> boneLocalOverrides;
 
 public:
     Animator(Animation* animation);
+    /// dt=0 时不推进时间，仍重算矩阵（便于暂停时叠表情覆盖）
     void updateAnimation(float dt);
     void playAnimation(Animation* pAnimation, bool resetTime = true);
     void setLooping(bool enabled) { looping = enabled; }
     bool isLooping() const { return looping; }
     bool isFinished() const;
+    void setBoneLocalOverrides(const map<string, glm::mat4>& overrides) { boneLocalOverrides = overrides; }
+    void clearBoneLocalOverrides() { boneLocalOverrides.clear(); }
     void calculateBoneTransform(const aiNode* node, glm::mat4 parentTransform);
     map<int, glm::mat4>& getFinalBoneMatrices();
 };

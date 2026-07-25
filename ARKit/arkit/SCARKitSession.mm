@@ -200,6 +200,9 @@ static simd_quatf SCARQuatFromTransform(simd_float4x4 m) {
     face.head = head;
     face.blendShapes = shapes;
     face.geometryVertexCount = faceAnchor.geometry ? (NSInteger)faceAnchor.geometry.vertexCount : 0;
+    face.leftEyeTransform = faceAnchor.leftEyeTransform;
+    face.rightEyeTransform = faceAnchor.rightEyeTransform;
+    face.hasEyeTransforms = YES;
 
     if ([self.delegate respondsToSelector:@selector(arSession:didUpdateFace:)]) {
         [self.delegate arSession:self didUpdateFace:face];
