@@ -22,6 +22,7 @@
 #include <map>
 #include <algorithm>
 #include <utility>
+#include <cctype>
 
 using namespace std;
 #define MAX_BONE_INFLUENCE 4
@@ -95,6 +96,10 @@ public:
     vector<string>      morphNames;
     /// 上次写入的 morph 权重（用于跳过无变化帧）
     vector<float>       lastMorphWeights;
+    /// 材质底色（glTF baseColorFactor）；无贴图时仍相乘
+    glm::vec4           materialColor{1.0f, 1.0f, 1.0f, 1.0f};
+    bool                doubleSided = false;
+    bool                isHair = false;
     
     unsigned int VAO;
     // constructor
@@ -195,66 +200,72 @@ public:
         unsigned int normalNr   = 1;
         unsigned int heightNr   = 1;
 
-        bool useAlphaCutout = false;
-        
+        bool useAlphaCutout = isHair;
+        bool hasDiffuse = false;
+
+        static GLuint whiteTex = 0;
+        if (!whiteTex) {
+            unsigned char white[] = { 255, 255, 255, 255 };
+            glGenTextures(1, &whiteTex);
+            glBindTexture(GL_TEXTURE_2D, whiteTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        }
+
         for(unsigned int i = 0; i < textures.size(); i++){
-            glActiveTexture(GL_TEXTURE0 + i);//激活纹理 GL_TEXTURE0 ....GL_TEXTUREi
-            glBindTexture(GL_TEXTURE_2D,textures[i].id);//绑定纹理的位置为 id
-            
-            string number;
+            glActiveTexture(GL_TEXTURE0 + i);
+            glBindTexture(GL_TEXTURE_2D,textures[i].id);
+
             string name = textures[i].type;
             if(name == "texture_diffuse"){
                 name = "material.diffuse";
-                number = std::to_string(diffuseNr++);
-                
+                hasDiffuse = true;
+                diffuseNr++;
             }else if (name == "texture_specular"){
                 name = "material.specular";
-                number = std::to_string(specularNr++);
-                
+                specularNr++;
             }else if (name == "texture_normal"){
-                number = std::to_string(normalNr++);
+                name = "texture_normal";
+                normalNr++;
             }else if (name == "texture_height"){
-                number = std::to_string(heightNr++);
+                name = "texture_height";
+                heightNr++;
             }
-//          glUniform1i(glGetUniformLocation(shader.ID,(name + number).c_str()),i);//也要设置相同的 数字 到作色器 GL_TEXTURE0
-            shader.setInt(name.c_str(), i);
+            shader.setInt(name.c_str(), (int)i);
 
-            // 针对狼毛发贴图（Wolf_Fur.jpg 无 alpha），启用 cutout
             if (textures[i].type == "texture_diffuse") {
-                if (textures[i].path.find("Fur") != string::npos || textures[i].path.find("fur") != string::npos) {
+                string pl = textures[i].path;
+                for (char& c : pl) c = (char)tolower((unsigned char)c);
+                // 路径或文件名含 fur（Wolf_Fur.jpg）都启用 cutout
+                if (pl.find("fur") != string::npos || pl.find("hair") != string::npos)
                     useAlphaCutout = true;
-                }
             }
-
         }
 
-        shader.setBool("useAlphaCutout", useAlphaCutout);
-
-        // 无贴图网格：给 diffuse/specular 绑白色，避免 ES 上采样未绑定纹理变黑
-        if (textures.empty()) {
-            static GLuint whiteTex = 0;
-            if (!whiteTex) {
-                unsigned char white[] = { 255, 255, 255, 255 };
-                glGenTextures(1, &whiteTex);
-                glBindTexture(GL_TEXTURE_2D, whiteTex);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            }
+        // 只有法线/无 diffuse（whiteMan 头发常见）：必须绑白贴图，否则 ES 上 sampler 未定义
+        if (!hasDiffuse) {
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, whiteTex);
             shader.setInt("material.diffuse", 0);
-            shader.setInt("material.specular", 0);
+            if (specularNr == 1)
+                shader.setInt("material.specular", 0);
         } else if (specularNr == 1) {
-            // 只有 diffuse：specular 也指到 0 号单元，避免未绑定 sampler
             shader.setInt("material.specular", 0);
         }
-        
-        //draw mseh
+
+        shader.setBool("useAlphaCutout", useAlphaCutout);
+        shader.setBool("hairSolidColor", isHair && !hasDiffuse);
+        shader.setVec4("materialColor", materialColor);
+
+        GLboolean wasCull = glIsEnabled(GL_CULL_FACE);
+        if (doubleSided || isHair) glDisable(GL_CULL_FACE);
+
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES,static_cast<unsigned>(indices.size()),GL_UNSIGNED_INT,0);
         glBindVertexArray(0);
-        
+
+        if (wasCull) glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
     }
 private:

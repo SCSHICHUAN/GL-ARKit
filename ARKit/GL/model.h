@@ -128,24 +128,38 @@ public:
         }
     }
 
-    /// 按 ARKit 规范名写权重；无名 morph 用 52/44 约定顺序
+    /// 按 ARKit 规范名写权重；每个 mesh 按自身 morph 数映射（49/51/44 混用时不能用全局 max）
     void setMorphWeightsByName(const map<string, float>& named) {
-        const int n = morphTargetCount();
-        if (n <= 0) return;
-        vector<string> names = resolveMorphNames(n);
-        vector<float> w(n, 0.0f);
-        for (int i = 0; i < n; ++i) {
-            if (i < (int)names.size() && !names[i].empty()) {
-                auto it = named.find(names[i]);
-                if (it != named.end()) w[i] = it->second;
+        for (auto& m : meshes) {
+            const int n = (int)m.morphDeltas.size();
+            if (n <= 0) continue;
+            vector<string> names;
+            bool anyName = false;
+            for (const auto& nm : m.morphNames) if (!nm.empty()) { anyName = true; break; }
+            if (anyName) {
+                names = m.morphNames;
+                names.resize(n);
+            } else {
+                names = defaultArkitMorphNames(n);
             }
+            if (names.empty()) continue;
+            vector<float> w(n, 0.0f);
+            for (int i = 0; i < n; ++i) {
+                if (i < (int)names.size() && !names[i].empty()) {
+                    auto it = named.find(names[i]);
+                    if (it != named.end()) w[i] = it->second;
+                }
+            }
+            m.setMorphWeights(w);
         }
-        setMorphWeights(w);
     }
 
-    /// 无名 morph：52=完整 ARKit；44=去掉 8 个 eyeLook（眼睛用骨转）
+    /// 无名 morph 名表（按数量区分模型）
+    /// - 52/51/49：Apple 文档常见顺序（blackMan 脸 mesh）
+    /// - 44：Unity ARKitBlendShapeLocation 枚举序去掉 8 个 Look（whiteMan / UnionAvatars）
     static vector<string> defaultArkitMorphNames(int count) {
-        static const char* k52[] = {
+        // Apple-ish 顺序（眼 Look 穿插在 Blink 后）
+        static const char* kApple52[] = {
             "eyeBlinkLeft","eyeLookDownLeft","eyeLookInLeft","eyeLookOutLeft","eyeLookUpLeft","eyeSquintLeft","eyeWideLeft",
             "eyeBlinkRight","eyeLookDownRight","eyeLookInRight","eyeLookOutRight","eyeLookUpRight","eyeSquintRight","eyeWideRight",
             "jawForward","jawLeft","jawRight","jawOpen",
@@ -159,22 +173,41 @@ public:
             "cheekPuff","cheekSquintLeft","cheekSquintRight",
             "noseSneerLeft","noseSneerRight","tongueOut"
         };
+        // Unity ARKitBlendShapeLocation 整数序（白模 44 = 此表去掉 Look）
+        static const char* kUnity52[] = {
+            "browDownLeft","browDownRight","browInnerUp","browOuterUpLeft","browOuterUpRight",
+            "cheekPuff","cheekSquintLeft","cheekSquintRight",
+            "eyeBlinkLeft","eyeBlinkRight",
+            "eyeLookDownLeft","eyeLookDownRight","eyeLookInLeft","eyeLookInRight",
+            "eyeLookOutLeft","eyeLookOutRight","eyeLookUpLeft","eyeLookUpRight",
+            "eyeSquintLeft","eyeSquintRight","eyeWideLeft","eyeWideRight",
+            "jawForward","jawLeft","jawOpen","jawRight",
+            "mouthClose","mouthDimpleLeft","mouthDimpleRight","mouthFrownLeft","mouthFrownRight",
+            "mouthFunnel","mouthLeft","mouthLowerDownLeft","mouthLowerDownRight",
+            "mouthPressLeft","mouthPressRight","mouthPucker","mouthRight",
+            "mouthRollLower","mouthRollUpper","mouthShrugLower","mouthShrugUpper",
+            "mouthSmileLeft","mouthSmileRight","mouthStretchLeft","mouthStretchRight",
+            "mouthUpperUpLeft","mouthUpperUpRight",
+            "noseSneerLeft","noseSneerRight","tongueOut"
+        };
         vector<string> out;
         if (count == 52) {
-            out.assign(k52, k52 + 52);
+            out.assign(kApple52, kApple52 + 52);
             return out;
         }
         if (count == 51) {
-            out.assign(k52, k52 + 51); // 无 tongueOut
+            out.assign(kApple52, kApple52 + 51); // blackMan：无 tongueOut
             return out;
         }
         if (count == 49) {
-            out.assign(k52, k52 + 49);
+            out.assign(kApple52, kApple52 + 49);
             return out;
         }
         if (count == 44) {
+            // whiteMan：Unity 序且无 Look（眼球用 LeftEye/RightEye 骨）
+            out.reserve(44);
             for (int i = 0; i < 52; ++i) {
-                string s = k52[i];
+                string s = kUnity52[i];
                 if (s.find("Look") != string::npos) continue;
                 out.push_back(s);
             }
@@ -450,6 +483,13 @@ private:
         //加载纹理（glTF 常用 BASE_COLOR；FBX 常用 DIFFUSE）
         // Megumin 等 toon/Sketchfab：颜色只在 emissiveTexture，baseColor 为黑且无贴图
         aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
+        string matName = material && material->GetName().length ? material->GetName().C_Str() : "";
+        string meshName = mesh->mName.length ? mesh->mName.C_Str() : "";
+        string matLower = matName, meshLower = meshName;
+        for (char& c : matLower) c = (char)tolower((unsigned char)c);
+        for (char& c : meshLower) c = (char)tolower((unsigned char)c);
+        const bool isHairMat = (matLower.find("hair") != string::npos || meshLower.find("hair") != string::npos);
+
         vector<Texture> diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_BASE_COLOR, "texture_diffuse");
         if (diffuseMaps.empty()) {
             diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_DIFFUSE, "texture_diffuse");
@@ -462,6 +502,13 @@ private:
             diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_EMISSION_COLOR, "texture_diffuse");
         }
 #endif
+        // 头发：再试 opacity / unknown（部分资源把发卡贴图挂在这些槽）
+        if (diffuseMaps.empty() && isHairMat) {
+            diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_OPACITY, "texture_diffuse");
+        }
+        if (diffuseMaps.empty() && isHairMat) {
+            diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_UNKNOWN, "texture_diffuse");
+        }
         textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
         //镜面反射
         vector<Texture> specularMaps = loadMaterialTextures(scene, material, aiTextureType_SPECULAR, "texture_specular");
@@ -475,6 +522,25 @@ private:
         //高度图
         vector<Texture> heightMaps = loadMaterialTextures(scene, material, aiTextureType_HEIGHT, "texture_height");
         textures.insert(textures.end(), heightMaps.begin(), heightMaps.end());
+
+        // 材质底色 / 双面 / 头发标记
+        glm::vec4 matColor(1.0f, 1.0f, 1.0f, 1.0f);
+        aiColor4D col;
+        if (material && (AI_SUCCESS == aiGetMaterialColor(material, AI_MATKEY_BASE_COLOR, &col) ||
+                         AI_SUCCESS == aiGetMaterialColor(material, AI_MATKEY_COLOR_DIFFUSE, &col))) {
+            matColor = glm::vec4(col.r, col.g, col.b, col.a);
+        }
+        // 已有 diffuse 贴图时不要用 FBX 底色（常很暗，会把狼身/Fur 乘黑）
+        if (!diffuseMaps.empty() && !isHairMat) {
+            matColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        }
+        // whiteMan 头发：baseColorFactor=(0,0,0) 且无 diffuse → 用默认发色
+        if (isHairMat && (matColor.r + matColor.g + matColor.b) < 0.05f) {
+            matColor = glm::vec4(0.20f, 0.14f, 0.10f, 1.0f);
+        }
+        int twosided = 0;
+        if (material)
+            aiGetMaterialInteger(material, AI_MATKEY_TWOSIDED, &twosided);
 
         // glTF morph targets → aiAnimMesh（部分资源把绝对 cm 坐标误标成 target）
         vector<vector<glm::vec3>> morphDeltas;
@@ -535,7 +601,11 @@ private:
         }
 
         //得到  顶点 索引 贴图 生成一个网格
-        return Mesh(vertices, indices, textures, bonePalette, std::move(morphDeltas), std::move(morphNames));
+        Mesh out(vertices, indices, textures, bonePalette, std::move(morphDeltas), std::move(morphNames));
+        out.materialColor = matColor;
+        out.doubleSided = (twosided != 0) || isHairMat;
+        out.isHair = isHairMat;
+        return out;
     };
     //加载模型中的图片等资源,生成纹理（支持 GLB 内嵌 *0 / GetEmbeddedTexture）
     vector<Texture> loadMaterialTextures(const aiScene *scene, aiMaterial *mat, aiTextureType type, string typeName){

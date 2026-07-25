@@ -65,6 +65,9 @@ static NSString * const kModelCellId = @"ModelCell";
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *pendingEyeWeights;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *pendingFaceWeights;
 @property (nonatomic, copy) NSString *pendingDumpText;
+@property (nonatomic, strong) UIView *loadingOverlay;
+@property (nonatomic, strong) UIActivityIndicatorView *loadingSpinner;
+@property (nonatomic, assign) BOOL modelLoading;
 @end
 
 @implementation GameViewController
@@ -154,11 +157,13 @@ static NSString * const kModelCellId = @"ModelCell";
     float smile = [proj.faceWeights[@"mouthSmileLeft"] floatValue] + [proj.faceWeights[@"mouthSmileRight"] floatValue];
     float brow = [proj.faceWeights[@"browInnerUp"] floatValue];
     float cheek = [proj.faceWeights[@"cheekPuff"] floatValue];
+    float blink = ([proj.eyeWeights[@"eyeBlinkLeft"] floatValue] +
+                   [proj.eyeWeights[@"eyeBlinkRight"] floatValue]) * 0.5f;
     NSString *text = [NSString stringWithFormat:
                       @"DRIVE HEAD ypr=(%.2f, %.2f, %.2f)\n"
-                      @"EYE L py=(%.2f,%.2f) R=(%.2f,%.2f)\n"
+                      @"EYE L py=(%.2f,%.2f) R=(%.2f,%.2f) blink=%.2f\n"
                       @"FACE smile=%.2f brow=%.2f cheek=%.2f jaw=%.2f",
-                      yaw, pitch, roll, ePL, eYL, ePR, eYR,
+                      yaw, pitch, roll, ePL, eYL, ePR, eYR, blink,
                       smile * 0.5f, brow, cheek,
                       [proj.faceWeights[@"jawOpen"] floatValue]];
 
@@ -351,6 +356,43 @@ static NSString * const kModelCellId = @"ModelCell";
         [self.movePad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12],
         [self.movePad.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
     ]];
+
+    self.loadingOverlay = [[UIView alloc] init];
+    self.loadingOverlay.translatesAutoresizingMaskIntoConstraints = NO;
+    self.loadingOverlay.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    self.loadingOverlay.hidden = YES;
+    self.loadingOverlay.userInteractionEnabled = YES; // 挡住误点
+    [self.view addSubview:self.loadingOverlay];
+
+    if (@available(iOS 13.0, *)) {
+        self.loadingSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    } else {
+        self.loadingSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    }
+    self.loadingSpinner.translatesAutoresizingMaskIntoConstraints = NO;
+    self.loadingSpinner.color = UIColor.whiteColor;
+    [self.loadingOverlay addSubview:self.loadingSpinner];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.loadingOverlay.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.loadingOverlay.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.loadingOverlay.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.loadingOverlay.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [self.loadingSpinner.centerXAnchor constraintEqualToAnchor:self.loadingOverlay.centerXAnchor],
+        [self.loadingSpinner.centerYAnchor constraintEqualToAnchor:self.loadingOverlay.centerYAnchor],
+    ]];
+}
+
+- (void)setModelLoadingVisible:(BOOL)visible {
+    self.modelLoading = visible;
+    self.loadingOverlay.hidden = !visible;
+    self.modelCollection.userInteractionEnabled = !visible;
+    if (visible) {
+        [self.view bringSubviewToFront:self.loadingOverlay];
+        [self.loadingSpinner startAnimating];
+    } else {
+        [self.loadingSpinner stopAnimating];
+    }
 }
 
 #pragma mark - UICollectionView
@@ -395,17 +437,33 @@ static NSString * const kModelCellId = @"ModelCell";
 }
 
 - (void)switchToModelAtIndex:(NSInteger)index {
+    if (self.modelLoading) return;
     if (index == self.selectedModelIndex) return;
-    BOOL ok = [self.glView loadModelAtIndex:index];
-    if (!ok) {
-        self.arDumpLabel.text = [NSString stringWithFormat:@"模型加载失败: %@", self.modelNames[(NSUInteger)index]];
-        return;
-    }
-    self.selectedModelIndex = index;
-    self.animNames = [self.glView animationNames] ?: @[];
-    [self.modelCollection reloadData];
-    [self.animCollection reloadData];
-    NSLog(@"[Model] switched to %@", self.modelNames[(NSUInteger)index]);
+    if (index < 0 || index >= (NSInteger)self.modelNames.count) return;
+
+    // 先亮菊花再加载：同步 Assimp/GL 会卡住主线程，必须下一圈 runloop 才能画出来
+    [self setModelLoadingVisible:YES];
+    self.arDumpLabel.text = [NSString stringWithFormat:@"加载中… %@", self.modelNames[(NSUInteger)index]];
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return;
+
+        BOOL ok = [self.glView loadModelAtIndex:index];
+        [self setModelLoadingVisible:NO];
+        if (!ok) {
+            self.arDumpLabel.text = [NSString stringWithFormat:@"模型加载失败: %@", self.modelNames[(NSUInteger)index]];
+            [self.modelCollection reloadData];
+            return;
+        }
+        self.selectedModelIndex = index;
+        self.animNames = [self.glView animationNames] ?: @[];
+        [self.modelCollection reloadData];
+        [self.animCollection reloadData];
+        self.arDumpLabel.text = [NSString stringWithFormat:@"已加载 %@", self.modelNames[(NSUInteger)index]];
+        NSLog(@"[Model] switched to %@", self.modelNames[(NSUInteger)index]);
+    });
 }
 
 #pragma mark - Button → SCRenderer

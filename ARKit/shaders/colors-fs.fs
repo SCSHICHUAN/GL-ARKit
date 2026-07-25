@@ -63,6 +63,8 @@ uniform PointLight pointLights[NR_POINT_LIGHTS];//点光源数组
 uniform SpotLight spotLight;//手电筒
 uniform Material material;//物体材质结构体
 uniform bool useAlphaCutout;
+uniform bool hairSolidColor;
+uniform vec4 materialColor;
 
 // function prototypes 函数原型
 vec3 CalcDirLight(DirLight light, vec3 normal, vec3 viewDir, vec3 albedo, vec3 specColor);//计算平行光
@@ -75,16 +77,23 @@ void main()
     float outAlpha = 1.0;
     vec3 albedo = albedoSample.rgb;
     vec3 specColor = vec3(texture(material.specular, TexCoords));
-    if (useAlphaCutout) {
-        // Wolf_Fur.jpg 是黑色毛发+白底（无 alpha），用亮度反推一个 cutout alpha
+    if (hairSolidColor) {
+        // whiteMan 头发：无 diffuse，用发色常量
+        albedo = materialColor.rgb;
+        if (dot(albedo, vec3(1.0)) < 0.05) albedo = vec3(0.20, 0.14, 0.10);
+        specColor = vec3(0.08);
+        outAlpha = materialColor.a;
+    } else if (useAlphaCutout) {
+        // Wolf_Fur.jpg：黑毛+白底，亮度反推 cutout；毛色固定，不乘材质底色
         float luma = dot(albedoSample.rgb, vec3(0.299, 0.587, 0.114));
         outAlpha = 1.0 - luma;
         outAlpha = smoothstep(0.15, 0.85, outAlpha);
         if (outAlpha < 0.1) discard;
-        // Fur 贴图本质是 mask，不要用它的黑白当“颜色”；给毛发一个更自然的常量色
         albedo = vec3(0.22, 0.18, 0.14);
-        // 毛发高光通常更弱
         specColor = vec3(0.05);
+    } else if (albedoSample.a < 0.99) {
+        outAlpha = albedoSample.a;
+        if (outAlpha < 0.08) discard;
     }
 
     // properties

@@ -37,7 +37,10 @@ struct CatalogEntry {
     float scale = 1.0f;
     float yOffset = -0.5f;
     float xOffset = 0.0f;
-    float defaultYawDeg = 0.0f; // initial left-right facing
+    float defaultYawDeg = 0.0f;   // initial left-right facing
+    float defaultPitchDeg = 0.0f; // initial nod（负=后仰，纠正人模前倾）
+    float cameraY = 0.35f;        // 切换模型时重置相机
+    float cameraZ = 2.8f;         // 越大越远（yaw=-90 时沿 +Z 后退）
 };
 
 static std::string toLowerCopy(std::string s) {
@@ -88,23 +91,31 @@ static bool pathEndsWithExt(const std::string& pathLower, const char* ext) {
 static void applyFormatLayout(CatalogEntry& e) {
     const std::string path = toLowerCopy(e.relativePath);
     if (pathEndsWithExt(path, ".fbx")) {
-        // FBX：常见游戏单位（如 Wolf）
+        // FBX：常见游戏单位（如 Wolf）— 体型大，相机往后一点才看得全
         e.scale = 0.018f;
         e.yOffset = -0.7f;
         e.xOffset = 0.0f;
         e.defaultYawDeg = 60.0f;
+        e.cameraY = 0.0f;
+        e.cameraZ = 4.8f;
     } else if (pathEndsWithExt(path, ".glb") || pathEndsWithExt(path, ".gltf")) {
         // glTF：米制人模；扶正后默认正面，略下移/右移进画面中心
         e.scale = 1.0f;
         e.yOffset = -1.0f;
         e.xOffset = 0.1f;
         e.defaultYawDeg = 0.0f;
+        // whiteMan / blackMan 扶正后仍略前倾，初始化后仰一点（Wolf 等 FBX 不走这里）
+        e.defaultPitchDeg = -0.0f;
+        e.cameraY = 0.0f;
+        e.cameraZ = 2.9f;
     } else {
         // obj/dae 等
         e.scale = 1.0f;
         e.yOffset = -0.5f;
         e.xOffset = 0.0f;
         e.defaultYawDeg = 180.0f;
+        e.cameraY = 0.4f;
+        e.cameraZ = 3.2f;
     }
 }
 
@@ -181,9 +192,9 @@ static std::vector<CatalogEntry> scanBundledModels(const std::string& resourceRo
                     continue;
                 }
                 applyFormatLayout(e);
-                printf("[Model] catalog: %s → %s (scale=%.4f y=%.2f x=%.2f yaw=%.0f)\n",
+                printf("[Model] catalog: %s → %s (scale=%.4f y=%.2f x=%.2f yaw=%.0f pitch=%.0f)\n",
                        e.name.c_str(), e.relativePath.c_str(),
-                       e.scale, e.yOffset, e.xOffset, e.defaultYawDeg);
+                       e.scale, e.yOffset, e.xOffset, e.defaultYawDeg, e.defaultPitchDeg);
                 catalog.push_back(std::move(e));
             }
         }
@@ -707,16 +718,27 @@ bool SCRendererData::loadModelAtIndex(int index) {
     impl_->modelAxisPivot = glm::vec3(0.0f);
     impl_->modelBasis = glm::mat4(1.0f);
     impl_->gModelYaw = glm::radians(entry.defaultYawDeg);
-    impl_->gModelPitch = 0.0f;
+    impl_->gModelPitch = glm::radians(entry.defaultPitchDeg);
+    // 按模型重置机位（狼更远，避免看不全）
+    impl_->camera.Position = glm::vec3(0.0f, entry.cameraY, entry.cameraZ);
+    impl_->camera.Yaw = -90.0f;
+    impl_->camera.Pitch = 0.0f;
+    impl_->camera.ProcessMouseMovement(0.0f, 0.0f);
     impl_->gAnimPaused = false;
     impl_->faceDriveWarnedNoHead = false;
     impl_->cachedNodeBind.clear();
     impl_->cachedNodeBindValid = false;
     clearFaceDrive();
 
-    printf("Model loaded: %s meshes=%d bones=%d anims=%d scale=%.4f yOff=%.3f\n",
+    printf("Model loaded: %s meshes=%d bones=%d anims=%d morphMax=%d faceBones=%d scale=%.4f yOff=%.3f\n",
            entry.name.c_str(), next->getMeshCount(), next->getBoneCount(), next->getAnimationCount(),
+           next->morphTargetCount(), (int)next->hasDetailedFaceBones(),
            impl_->modelScale, impl_->modelYOffset);
+    if (next->morphTargetCount() == 44) {
+        printf("[Model] whiteMan-style morphs: Unity ARKit order (no Look); blink@8/9 jawOpen@16\n");
+    } else if (next->hasDetailedFaceBones()) {
+        printf("[Model] blackMan-style: eyelid/jaw bones + Apple-order morphs\n");
+    }
 
     if (next->getAnimation()) {
         impl_->animator = new Animator(next->getAnimation());
@@ -972,6 +994,9 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     float yawL   = fmaxf(-0.95f, fminf(0.95f, eyeYawL));
     float pitchR = fmaxf(-0.85f, fminf(0.85f, eyePitchR));
     float yawR   = fmaxf(-0.95f, fminf(0.95f, eyeYawR));
+    // ARKit 抬头 → pitch>0；角色局部 Rx+ 是低头，故上下取反（whiteMan / blackMan 共用）
+    pitchL = -pitchL;
+    pitchR = -pitchR;
 
     auto eyeLookMat = [](float p, float y) {
         glm::mat4 m(1.0f);
@@ -1022,59 +1047,80 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         overrides[kv.first] = orbitGaze(bit->second, isRight ? gazeR : gazeL);
     }
 
-    // whiteMan 等简骨：LeftEye_00 / RightEye_07 / Left_Eye
+    // whiteMan 等简骨：LeftEye_00 / RightEye_07
+    // Animator 对非 c_eye_ref_track 是 bind*ov；只能写旋转增量，不能写完整 orbit（否则 T 叠两次，眼球飞出）
     if (!useFaceBones) {
         for (const auto& kv : bones) {
             const std::string bn = lowerCopy(kv.first);
             if (bn.find("lid") != std::string::npos) continue;
             if (bn.find("brow") != std::string::npos) continue;
             if (bn.find("_end") != std::string::npos) continue;
-            const bool left = (bn.find("lefteye") != std::string::npos || bn.find("left_eye") != std::string::npos);
-            const bool right = (bn.find("righteye") != std::string::npos || bn.find("right_eye") != std::string::npos);
+            // 只匹配 LeftEye / RightEye，避开空父节点 Left_Eye
+            const bool left = (bn.find("lefteye") != std::string::npos);
+            const bool right = (bn.find("righteye") != std::string::npos);
             if (!left && !right) continue;
-            auto bit = nodeBind.find(kv.first);
-            if (bit == nodeBind.end()) continue;
-            overrides[kv.first] = orbitGaze(bit->second, right ? gazeR : gazeL);
+            overrides[kv.first] = right ? gazeR : gazeL;
         }
     }
 
-    // —— 眨眼（细眼皮骨）——
+    // —— 眨眼（细眼皮骨，仅 blackMan；whiteMan 走 morph，勿改那边）——
+    // 蒙皮在 c_eyelid_top/bot_0N；关睑主轴在父骨 eyelid_top/bot（不在 skin 表，要从 node 树写）。
     if (useFaceBones) {
-    auto applyEyelid = [&](bool left, float blink, float squint, float wide) {
-        float close = fminf(1.0f, blink + squint * 0.45f);
-        float open = wide * 0.20f;
-        float topAmt = -(close * 0.65f) + open;
-        float botAmt = (close * 0.40f) - open * 0.25f;
-        if (fabsf(topAmt) < 0.0005f && fabsf(botAmt) < 0.0005f) return;
-        glm::mat4 top = glm::rotate(glm::mat4(1.0f), topAmt, glm::vec3(1, 0, 0));
-        glm::mat4 bot = glm::rotate(glm::mat4(1.0f), botAmt, glm::vec3(1, 0, 0));
-        const char* side = left ? ".l" : ".r";
-        for (const auto& kv : bones) {
-            const std::string bn = lowerCopy(kv.first);
-            if (bn.find(side) == std::string::npos) continue;
-            if (bn.find("end") != std::string::npos) continue;
-            if (bn.find("ref") != std::string::npos) continue;
-            if (bn.find("c_eyelid_top") != std::string::npos) overrides[kv.first] = top;
-            else if (bn.find("c_eyelid_bot") != std::string::npos) overrides[kv.first] = bot;
-        }
-    };
-    applyEyelid(true, blinkL, squintL, wideL);
-    applyEyelid(false, blinkR, squintR, wideR);
+        auto applyEyelid = [&](bool left, float blink, float squint, float wide) {
+            float close = fminf(1.0f, blink + squint * 0.55f);
+            float open = wide * 0.25f;
+            // blackMan 局部轴：闭眼需上睑 −Rx、下睑 +Rx（与 +/− 相反会变成越闭越睁）
+            float topAmt = -(close * 0.85f) + open;
+            float botAmt = (close * 0.55f) - open * 0.35f;
+            if (fabsf(topAmt) < 0.0005f && fabsf(botAmt) < 0.0005f) return;
+            glm::mat4 top = glm::rotate(glm::mat4(1.0f), topAmt, glm::vec3(1, 0, 0));
+            glm::mat4 bot = glm::rotate(glm::mat4(1.0f), botAmt, glm::vec3(1, 0, 0));
+            const char* side = left ? ".l" : ".r";
+
+            auto driveLid = [&](const std::string& name) {
+                const std::string bn = lowerCopy(name);
+                if (bn.find(side) == std::string::npos) return;
+                if (bn.find("end") != std::string::npos) return;
+                if (bn.find("ref") != std::string::npos) return;
+                if (bn.find("corner") != std::string::npos) return;
+                const bool isTop = (bn.find("eyelid_top") != std::string::npos);
+                const bool isBot = (bn.find("eyelid_bot") != std::string::npos);
+                if (!isTop && !isBot) return;
+                overrides[name] = isTop ? top : bot;
+            };
+            for (const auto& kv : bones) driveLid(kv.first);
+            // 父级 eyelid_top/bot 无蒙皮权重，不在 boneInfoMap，必须从节点缓存补写
+            for (const auto& kv : nodeBind) driveLid(kv.first);
+        };
+        applyEyelid(true, blinkL, squintL, wideL);
+        applyEyelid(false, blinkR, squintR, wideR);
     }
 
-    // —— Morph：脸部表情主通道（有细脸骨时也启用）——
-    // 只写入 faceWeights，绝不写 eye*，避免动到现有眨眼/注视。
-    // 张嘴仍主要由 jaw 骨驱动，morph 里去掉 jaw* 防止张嘴叠两层。
+    // —— Morph ——
+    // whiteMan（无细脸骨，44 / Unity 序）：眨眼+表情全走 morph。
+    // blackMan（细脸骨，51 / Apple 序）：眨眼/jaw 只走骨；morph 只补嘴眉颊，避免和眼皮骨方向打架。
     bool appliedMorphs = false;
     if (impl_->ourModel->hasMorphTargets()) {
-        std::map<std::string, float> faceMorph = faceWeights;
-        faceMorph.erase("jawOpen");
-        faceMorph.erase("jawLeft");
-        faceMorph.erase("jawRight");
-        faceMorph.erase("jawForward");
-        if (!useFaceBones) {
-            // 无细脸骨模型：眼部 morph 也需要（blink 等）
-            for (const auto& kv : eyeWeights) faceMorph[kv.first] = kv.second;
+        std::map<std::string, float> faceMorph;
+        const float kGain = useFaceBones ? 1.0f : 1.85f; // 仅 whiteMan 放大
+        auto put = [&](const std::string& k, float w) {
+            if (k.find("Look") != std::string::npos) return; // 注视走眼骨
+            // blackMan：眨眼/眯眼/睁大已由 eyelid 骨驱动，勿再写 morph
+            if (useFaceBones &&
+                (k.find("Blink") != std::string::npos ||
+                 k.find("Squint") != std::string::npos ||
+                 k.find("Wide") != std::string::npos)) {
+                return;
+            }
+            faceMorph[k] = fminf(1.0f, fmaxf(0.0f, w) * kGain);
+        };
+        for (const auto& kv : faceWeights) put(kv.first, kv.second);
+        for (const auto& kv : eyeWeights) put(kv.first, kv.second);
+        if (useFaceBones) {
+            faceMorph.erase("jawOpen");
+            faceMorph.erase("jawLeft");
+            faceMorph.erase("jawRight");
+            faceMorph.erase("jawForward");
         }
         impl_->ourModel->setMorphWeightsByName(faceMorph);
         appliedMorphs = true;
