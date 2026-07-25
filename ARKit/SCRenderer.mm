@@ -213,12 +213,31 @@
 
 #pragma mark - Scene / animation (for VC buttons)
 
-- (void)toggleAnimPause     { if (self.data) self.data->toggleAnimPause(); }
-- (void)playWalk            { if (self.data) self.data->playWalk(); }
-- (void)playRun             { if (self.data) self.data->playRun(); }
-- (void)playCrawl           { if (self.data) self.data->playCrawl(); }
-- (void)playIdle            { if (self.data) self.data->playIdle(); }
-- (void)browsePrevAnim      { if (self.data) self.data->browsePrevAnim(); }
-- (void)browseNextAnim      { if (self.data) self.data->browseNextAnim(); }
+- (NSArray<NSString *> *)animationNames {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    if (!self.data) return names;
+    const int n = self.data->animationCount();
+    for (int i = 0; i < n; ++i) {
+        std::string raw = self.data->animationNameAt(i);
+        NSString *label = raw.empty()
+            ? [NSString stringWithFormat:@"Anim %d", i]
+            : [NSString stringWithUTF8String:raw.c_str()];
+        // FBX often uses "Armature|Walk" — show the last segment.
+        NSRange pipe = [label rangeOfString:@"|" options:NSBackwardsSearch];
+        if (pipe.location != NSNotFound) {
+            label = [label substringFromIndex:pipe.location + 1];
+        }
+        [names addObject:label];
+    }
+    return names;
+}
+
+- (void)playAnimationAtIndex:(NSInteger)index {
+    if (self.data) self.data->playAnimationAtIndex((int)index);
+}
+
+- (void)toggleAnimPause {
+    if (self.data) self.data->toggleAnimPause();
+}
 
 @end

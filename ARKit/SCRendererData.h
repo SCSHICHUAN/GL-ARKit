@@ -32,12 +32,11 @@ public:
     void setMoveDown(bool on);
 
     void toggleAnimPause();
-    void playWalk();
-    void playRun();
-    void playCrawl();
-    void playIdle();
-    void browsePrevAnim();
-    void browseNextAnim();
+
+    /// Available after model load (Assimp clips).
+    int animationCount() const;
+    std::string animationNameAt(int index) const;
+    void playAnimationAtIndex(int index);
 
 private:
     struct Impl;

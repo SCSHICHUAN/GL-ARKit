@@ -419,31 +419,21 @@ void SCRendererData::toggleAnimPause() {
     impl_->gAnimPaused = !impl_->gAnimPaused;
     std::cout << "[Toggle] Anim pause: " << (impl_->gAnimPaused ? "ON" : "OFF") << std::endl;
 }
-void SCRendererData::playWalk()  { if (impl_) impl_->switchAnimByKeywordOrIndex("walk", 2, true); }
-void SCRendererData::playRun()   { if (impl_) impl_->switchAnimByKeywordOrIndex("run", 3, true); }
-void SCRendererData::playCrawl() {
+
+int SCRendererData::animationCount() const {
+    if (!impl_ || !impl_->gModel) return 0;
+    return impl_->gModel->getAnimationCount();
+}
+
+std::string SCRendererData::animationNameAt(int index) const {
+    if (!impl_ || !impl_->gModel) return {};
+    Animation* a = impl_->gModel->getAnimation(index);
+    return a ? a->getSourceName() : std::string();
+}
+
+void SCRendererData::playAnimationAtIndex(int index) {
     if (!impl_) return;
-    impl_->switchAnimByKeywordsOrIndex({"crawl", "prone", "creep"}, 4, true);
-    impl_->gActionAnimIndex = -1;
-}
-void SCRendererData::playIdle() {
-    if (!impl_) return;
-    impl_->switchAnim(impl_->gIdleAnimIndex, true);
-    impl_->gActionAnimIndex = -1;
-}
-void SCRendererData::browsePrevAnim() {
-    if (!impl_ || !impl_->gModel) return;
-    int count = impl_->gModel->getAnimationCount();
-    if (count <= 0) return;
-    impl_->gBrowseAnimIndex = (impl_->gBrowseAnimIndex - 1 + count) % count;
-    impl_->switchAnim(impl_->gBrowseAnimIndex, true);
-    impl_->gActionAnimIndex = -1;
-}
-void SCRendererData::browseNextAnim() {
-    if (!impl_ || !impl_->gModel) return;
-    int count = impl_->gModel->getAnimationCount();
-    if (count <= 0) return;
-    impl_->gBrowseAnimIndex = (impl_->gBrowseAnimIndex + 1) % count;
-    impl_->switchAnim(impl_->gBrowseAnimIndex, true);
+    impl_->switchAnim(index, true);
+    impl_->gBrowseAnimIndex = index;
     impl_->gActionAnimIndex = -1;
 }

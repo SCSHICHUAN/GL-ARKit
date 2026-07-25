@@ -20,14 +20,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setMoveUp:(BOOL)on;
 - (void)setMoveDown:(BOOL)on;
 
-/// Scene / animation controls (UI lives in ViewController).
+/// Clip names from the loaded model (ready after startRendering succeeds).
+- (NSArray<NSString *> *)animationNames;
+- (void)playAnimationAtIndex:(NSInteger)index;
 - (void)toggleAnimPause;
-- (void)playWalk;
-- (void)playRun;
-- (void)playCrawl;
-- (void)playIdle;
-- (void)browsePrevAnim;
-- (void)browseNextAnim;
 
 @end
 
