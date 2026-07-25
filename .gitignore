@@ -1,3 +1,11 @@
 # Xcode 用户本地界面状态
 *.xcuserstate
 xcuserdata/
+
+# macOS
+.DS_Store
+
+# 构建产物 / 杂项
+DerivedData/
+*.swp
+*~

@@ -1,6 +1,6 @@
 /*
   GameViewController.mm
-  UI host: embeds SCRenderer; model switch + animation clips; ARKit dump (not linked to model yet).
+  UI host: embeds SCRenderer; model switch + animation clips; ARKit Face → face drive.
 */
 
 #import "GameViewController.h"
@@ -93,7 +93,7 @@ static NSString * const kModelCellId = @"ModelCell";
     [self.arSession stop];
 }
 
-#pragma mark - ARKit (dump only)
+#pragma mark - ARKit
 
 - (void)setupARKit {
     self.arSession = [[SCARKitSession alloc] init];

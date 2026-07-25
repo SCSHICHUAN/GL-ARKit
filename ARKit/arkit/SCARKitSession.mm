@@ -1,6 +1,6 @@
 /*
   SCARKitSession.mm
-  ARSession wrapper — dumps head / body / face data; no model binding yet.
+  ARSession wrapper — Face / Body tracking; Face 数据经 SCARFaceProjector 驱动模型。
 */
 
 #import "SCARKitSession.h"

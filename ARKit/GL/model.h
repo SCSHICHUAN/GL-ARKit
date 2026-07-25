@@ -236,7 +236,7 @@ private:
     void loadModel(string const &path){
         // iOS 使用的 Assimp 5：关闭 FBX pivot 拆分，行为才接近原先桌面版 Assimp
         importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-        // facial_animation 等模型有数百根骨；拆成每 mesh ≤64，才能用 100 槽调色板蒙皮
+        // blackMan 等大骨架：拆成每 mesh ≤64，才能用 100 槽调色板蒙皮
         importer.SetPropertyInteger(AI_CONFIG_PP_SBBC_MAX_BONES, 64);
         const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate |
                                                  aiProcess_GenSmoothNormals |
@@ -260,7 +260,7 @@ private:
 
         // Assimp FBX：厂商 mOffsetMatrix 常与节点层级不一致 → 蒙皮炸开。
         // 用 bind 姿势重算 offset = inv(boneGlobal) * meshGlobal（不改蒙皮公式）。
-        // 注意：glTF/GLB 的 inverseBindMatrices 一般是对的，重算会毁掉 facial_animation 这类多 mesh 皮肤。
+        // 注意：glTF/GLB 的 inverseBindMatrices 一般是对的，重算会毁掉多 mesh 皮肤。
         const bool isFbx = path.size() >= 4 &&
             (path.compare(path.size() - 4, 4, ".fbx") == 0 ||
              path.compare(path.size() - 4, 4, ".FBX") == 0);
@@ -481,7 +481,7 @@ private:
                 indices.push_back(face.mIndices[j]);
         }
         //加载纹理（glTF 常用 BASE_COLOR；FBX 常用 DIFFUSE）
-        // Megumin 等 toon/Sketchfab：颜色只在 emissiveTexture，baseColor 为黑且无贴图
+        // 部分 Sketchfab 材质：颜色只在 emissiveTexture，baseColor 为黑且无贴图
         aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
         string matName = material && material->GetName().length ? material->GetName().C_Str() : "";
         string meshName = mesh->mName.length ? mesh->mName.C_Str() : "";

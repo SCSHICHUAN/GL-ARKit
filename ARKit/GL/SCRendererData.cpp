@@ -201,13 +201,7 @@ static std::vector<CatalogEntry> scanBundledModels(const std::string& resourceRo
     }
 
     if (catalog.empty()) {
-        // Legacy fallback（仅保留仍存在的 Wolf FBX）
-        printf("[Model] models/ missing — using legacy Wolf path\n");
-        CatalogEntry wolf;
-        wolf.name = "Wolf";
-        wolf.relativePath = "Wolf-fbx/Wolf_One_fbx7.4_binary.fbx";
-        applyFormatLayout(wolf);
-        catalog.push_back(std::move(wolf));
+        printf("[Model] models/ missing or empty — no catalog entries\n");
     }
 
     std::stable_sort(catalog.begin(), catalog.end(),
@@ -617,7 +611,7 @@ void SCRendererData::render() {
         model = glm::translate(model, -impl_->modelAxisPivot);
     }
     impl_->ourShader->setMat4("model", model);
-    // 每 mesh 按骨骼调色板上传（支持 facial_animation 等 700+ 骨模型）
+    // 每 mesh 按骨骼调色板上传（blackMan 等大骨架：每 mesh ≤64，全局 100 槽）
     if (impl_->animator && impl_->ourModel->getAnimation()) {
         auto& finalBoneMatrices = impl_->animator->getFinalBoneMatrices();
         impl_->ourModel->Draw(*impl_->ourShader, &finalBoneMatrices);

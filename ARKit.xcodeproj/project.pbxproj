@@ -7,15 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0F68764E624E4E98A33C0AAE /* Wolf_Eyes_2.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = D39C096BEE944CDC91213D02 /* Wolf_Eyes_2.jpg */; };
 		17D1891E024A4B69B00F95F7 /* glm.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 92A6F07B07F6402D85875F1D /* glm.cpp */; };
 		1D4EBAD5BA6F4F698478EFA2 /* colors-fs.fs in CopyShaders */ = {isa = PBXBuildFile; fileRef = DCC7266525AB4FFD9A01E630 /* colors-fs.fs */; };
 		257F56CE53164DC8B22D2E13 /* lamp-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = D70F778CA631448EAE7F8399 /* lamp-vs.vs */; };
 		26D7B5F6F0924421999773D6 /* colors-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 26E020C3872A4005B77533C9 /* colors-vs.vs */; };
-		3963635B1F724E3A9A76FACB /* Wolf_One_fbx7.4_binary.fbx in CopyWolf */ = {isa = PBXBuildFile; fileRef = 9D55902C66BC4E2DB9A41104 /* Wolf_One_fbx7.4_binary.fbx */; };
 		43D0639593294682A7A9EA72 /* lamp-fs.fs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 6A26192DE3D54569B2683689 /* lamp-fs.fs */; };
 		50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */; };
-		71229441BA344699A0E19106 /* Wolf_Body.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = 49DCD418EB10443FB3D7B6E7 /* Wolf_Body.jpg */; };
 		810A595570CA44DB90DBCA12 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9EAF6FEBF847409AB9CB8706 /* libz.tbd */; };
 		853D2509691E4E29A33B3B47 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 6DC33C57086843E4847844A7 /* AppDelegate.m */; };
 		8DE0F791E11B4D2AA9CDA0EA /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AC4095A219F84F9A9237989F /* QuartzCore.framework */; };
@@ -25,10 +22,8 @@
 		A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000005 /* ARKit.framework */; };
 		A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000006 /* AVFoundation.framework */; };
 		A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000008 /* SCARFaceProjector.m */; };
-		A2FCCBD4B989469D8620780F /* Wolf_Eyes_1.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = A35928BD29E8469F930951E1 /* Wolf_Eyes_1.jpg */; };
 		AABEFF57A9AE45078658E784 /* animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1B4A856417284C869F0E21D1 /* animation.cpp */; };
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
-		CB24F8ECA1694576A0E6E814 /* Wolf_Fur.jpg in CopyWolfTex */ = {isa = PBXBuildFile; fileRef = 9014668B917A4A09A14340BC /* Wolf_Fur.jpg */; };
 		CD1B44AF45C3435CAF1A7E99 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = F71CCB474A3146C1BA298D3A /* libc++.tbd */; };
 		DCE31A7089E64EF68ABC1F34 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B14B9C7B567A481A9C233D54 /* Assets.xcassets */; };
 		E26DD32CE6064190AA68F0FD /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C5FD4B2EF4524AA98C1F2E75 /* Foundation.framework */; };
@@ -50,31 +45,6 @@
 				43D0639593294682A7A9EA72 /* lamp-fs.fs in CopyShaders */,
 			);
 			name = CopyShaders;
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A10000030000000100000005 /* CopyWolf */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "Wolf-fbx";
-			dstSubfolderSpec = 7;
-			files = (
-				3963635B1F724E3A9A76FACB /* Wolf_One_fbx7.4_binary.fbx in CopyWolf */,
-			);
-			name = CopyWolf;
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A10000030000000100000006 /* CopyWolfTex */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "Wolf-fbx/textures";
-			dstSubfolderSpec = 7;
-			files = (
-				71229441BA344699A0E19106 /* Wolf_Body.jpg in CopyWolfTex */,
-				A2FCCBD4B989469D8620780F /* Wolf_Eyes_1.jpg in CopyWolfTex */,
-				0F68764E624E4E98A33C0AAE /* Wolf_Eyes_2.jpg in CopyWolfTex */,
-				CB24F8ECA1694576A0E6E814 /* Wolf_Fur.jpg in CopyWolfTex */,
-			);
-			name = CopyWolfTex;
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -1458,8 +1428,6 @@
 				A10000030000000100000001 /* Frameworks */,
 				A10000030000000100000003 /* Resources */,
 				A10000030000000100000004 /* CopyShaders */,
-				A10000030000000100000005 /* CopyWolf */,
-				A10000030000000100000006 /* CopyWolfTex */,
 				A10000030000000100000007 /* CopyModels */,
 			);
 			buildRules = (

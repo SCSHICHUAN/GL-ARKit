@@ -14,7 +14,7 @@ public:
     SCRendererData();
     ~SCRendererData();
 
-    // resourceRoot: absolute path to bundle resources (shaders/, Wolf-fbx/, ...)
+    // resourceRoot: absolute path to bundle resources (shaders/, models/, ...)
     bool init(const std::string& resourceRoot, int width, int height);
     void resize(int width, int height);
     void update(float deltaTime);
