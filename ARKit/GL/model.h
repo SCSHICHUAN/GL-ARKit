@@ -168,6 +168,10 @@ public:
             out.assign(k52, k52 + 51); // 无 tongueOut
             return out;
         }
+        if (count == 49) {
+            out.assign(k52, k52 + 49);
+            return out;
+        }
         if (count == 44) {
             for (int i = 0; i < 52; ++i) {
                 string s = k52[i];
@@ -483,6 +487,23 @@ private:
             }
             morphDeltas.resize(mesh->mNumAnimMeshes);
             morphNames.resize(mesh->mNumAnimMeshes);
+            // 先估一个共享尺度（绝对 cm 目标），避免每个 morph 各自 maxAnim 不同把表情压扁
+            float sharedUnit = 1.0f;
+            bool haveSharedUnit = false;
+            for (unsigned int mi = 0; mi < mesh->mNumAnimMeshes; ++mi) {
+                aiAnimMesh* am = mesh->mAnimMeshes[mi];
+                if (!am || !am->mVertices) continue;
+                float maxAnim = 0.0f;
+                for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+                    const aiVector3D& t = am->mVertices[i];
+                    maxAnim = std::max(maxAnim, std::fabs(t.x) + std::fabs(t.y) + std::fabs(t.z));
+                }
+                if (maxBase > 1e-6f && maxAnim > maxBase * 2.0f) {
+                    sharedUnit = maxAnim > 1e-8f ? (maxBase / maxAnim) : 1.0f;
+                    haveSharedUnit = true;
+                    break;
+                }
+            }
             for (unsigned int mi = 0; mi < mesh->mNumAnimMeshes; ++mi) {
                 aiAnimMesh* am = mesh->mAnimMeshes[mi];
                 morphNames[mi] = am && am->mName.length ? am->mName.C_Str() : "";
@@ -494,11 +515,8 @@ private:
                     const aiVector3D& t = am->mVertices[i];
                     maxAnim = std::max(maxAnim, std::fabs(t.x) + std::fabs(t.y) + std::fabs(t.z));
                 }
-                // 绝对形态（常见于 UnionAvatars：厘米）vs 规范 glTF 相对位移
                 const bool absolute = (maxBase > 1e-6f && maxAnim > maxBase * 2.0f);
-                float unit = 1.0f;
-                if (absolute && maxBase > 1e-6f && (maxAnim / maxBase) > 50.0f)
-                    unit = 0.01f; // cm → m
+                const float unit = absolute ? (haveSharedUnit ? sharedUnit : (maxAnim > 1e-8f ? maxBase / maxAnim : 1.0f)) : 1.0f;
 
                 for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
                     const aiVector3D& b = mesh->mVertices[i];

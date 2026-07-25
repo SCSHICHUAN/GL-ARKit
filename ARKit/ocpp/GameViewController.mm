@@ -151,10 +151,16 @@ static NSString * const kModelCellId = @"ModelCell";
     float ePL = proj.eyePitchLeft, eYL = proj.eyeYawLeft;
     float ePR = proj.eyePitchRight, eYR = proj.eyeYawRight;
 
+    float smile = [proj.faceWeights[@"mouthSmileLeft"] floatValue] + [proj.faceWeights[@"mouthSmileRight"] floatValue];
+    float brow = [proj.faceWeights[@"browInnerUp"] floatValue];
+    float cheek = [proj.faceWeights[@"cheekPuff"] floatValue];
     NSString *text = [NSString stringWithFormat:
                       @"DRIVE HEAD ypr=(%.2f, %.2f, %.2f)\n"
-                      @"EYE L py=(%.2f,%.2f) R=(%.2f,%.2f)",
-                      yaw, pitch, roll, ePL, eYL, ePR, eYR];
+                      @"EYE L py=(%.2f,%.2f) R=(%.2f,%.2f)\n"
+                      @"FACE smile=%.2f brow=%.2f cheek=%.2f jaw=%.2f",
+                      yaw, pitch, roll, ePL, eYL, ePR, eYR,
+                      smile * 0.5f, brow, cheek,
+                      [proj.faceWeights[@"jawOpen"] floatValue]];
 
     self.pendingHeadYaw = yaw;
     self.pendingHeadPitch = pitch;

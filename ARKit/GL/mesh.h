@@ -93,6 +93,8 @@ public:
     /// morph 位移（米）：[morphIndex][vertIndex]
     vector<vector<glm::vec3>> morphDeltas;
     vector<string>      morphNames;
+    /// 上次写入的 morph 权重（用于跳过无变化帧）
+    vector<float>       lastMorphWeights;
     
     unsigned int VAO;
     // constructor
@@ -120,13 +122,42 @@ public:
         if (morphDeltas.empty() || bindPositions.empty()) return;
         const size_t nMorph = morphDeltas.size();
         const size_t nVert = bindPositions.size();
+
+        // 权重几乎没变就跳过（AR 回调很密，这是卡顿主因之一）
+        if (lastMorphWeights.size() == nMorph) {
+            bool same = true;
+            const size_t nCmp = std::min(nMorph, weights.size());
+            for (size_t mi = 0; mi < nCmp; ++mi) {
+                if (fabsf(weights[mi] - lastMorphWeights[mi]) > 0.012f) { same = false; break; }
+            }
+            if (same) return;
+        }
+
+        // 只混合激活的 morph，避免 verts × 51 的空转
+        struct Active { size_t mi; float w; };
+        std::vector<Active> active;
+        active.reserve(16);
+        for (size_t mi = 0; mi < nMorph; ++mi) {
+            const float w = (mi < weights.size()) ? weights[mi] : 0.0f;
+            if (fabsf(w) < 0.012f) continue;
+            active.push_back({mi, w});
+        }
+
+        lastMorphWeights.assign(nMorph, 0.0f);
+        for (size_t mi = 0; mi < std::min(nMorph, weights.size()); ++mi)
+            lastMorphWeights[mi] = weights[mi];
+
+        if (active.empty()) {
+            for (size_t vi = 0; vi < nVert; ++vi)
+                vertices[vi].Position = bindPositions[vi];
+            uploadPositions();
+            return;
+        }
+
         for (size_t vi = 0; vi < nVert; ++vi) {
             glm::vec3 p = bindPositions[vi];
-            for (size_t mi = 0; mi < nMorph; ++mi) {
-                const float w = (mi < weights.size()) ? weights[mi] : 0.0f;
-                if (fabsf(w) < 1e-5f) continue;
-                p += w * morphDeltas[mi][vi];
-            }
+            for (const Active& a : active)
+                p += a.w * morphDeltas[a.mi][vi];
             vertices[vi].Position = p;
         }
         uploadPositions();
@@ -136,6 +167,7 @@ public:
         if (bindPositions.empty()) return;
         for (size_t i = 0; i < bindPositions.size(); ++i)
             vertices[i].Position = bindPositions[i];
+        lastMorphWeights.clear();
         uploadPositions();
     }
     

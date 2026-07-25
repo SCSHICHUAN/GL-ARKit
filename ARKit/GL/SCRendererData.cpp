@@ -259,6 +259,9 @@ struct SCRendererData::Impl {
     float arHeadYaw = 0.0f;
     float arHeadPitch = 0.0f;
     float arHeadRoll = 0.0f;
+    /// 节点 bind 局部矩阵缓存（眼球 orbit 用），避免每帧整树遍历
+    std::map<std::string, glm::mat4> cachedNodeBind;
+    bool cachedNodeBindValid = false;
 
     bool moveForward = false, moveBackward = false, moveLeft = false;
     bool moveRight = false, moveUp = false, moveDown = false;
@@ -287,6 +290,8 @@ struct SCRendererData::Impl {
         gExtraAnimKeySlots.clear();
         gBrowseAnimIndex = 0;
         faceDriveWarnedNoHead = false;
+        cachedNodeBind.clear();
+        cachedNodeBindValid = false;
         modelHasAxisPivot = false;
         modelAxisPivot = glm::vec3(0.0f);
         modelBasis = glm::mat4(1.0f);
@@ -705,6 +710,8 @@ bool SCRendererData::loadModelAtIndex(int index) {
     impl_->gModelPitch = 0.0f;
     impl_->gAnimPaused = false;
     impl_->faceDriveWarnedNoHead = false;
+    impl_->cachedNodeBind.clear();
+    impl_->cachedNodeBindValid = false;
     clearFaceDrive();
 
     printf("Model loaded: %s meshes=%d bones=%d anims=%d scale=%.4f yOff=%.3f\n",
@@ -845,6 +852,28 @@ static void addBoneOverrideContaining(std::map<std::string, glm::mat4>& out,
     }
 }
 
+/// 只写脸部变形骨：跳过 eye/lid，以及 ref/retain/offset/end，避免叠两层或碰到现有眼驱动
+static void addFaceBoneOverride(std::map<std::string, glm::mat4>& out,
+                                const std::map<std::string, BoneInfo>& bones,
+                                const std::string& needle,
+                                const glm::mat4& xform) {
+    const std::string n = lowerCopy(needle);
+    for (const auto& kv : bones) {
+        std::string bn = lowerCopy(kv.first);
+        if (bn.find(n) == std::string::npos) continue;
+        if (bn.find("eyelid") != std::string::npos) continue;
+        // 跳过眼球相关，但保留 eyebrow
+        if (bn.find("eye") != std::string::npos && bn.find("brow") == std::string::npos) continue;
+        if (bn.find("_end") != std::string::npos) continue;
+        if (bn.find("_ref") != std::string::npos) continue;
+        if (bn.find("retain") != std::string::npos) continue;
+        if (bn.find("offset") != std::string::npos) continue;
+        auto it = out.find(kv.first);
+        if (it == out.end()) out[kv.first] = xform;
+        else it->second = it->second * xform;
+    }
+}
+
 void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float headRollRad,
                                     float eyePitchL, float eyeYawL, float eyePitchR, float eyeYawR,
                                     const std::map<std::string, float>& eyeWeights,
@@ -910,39 +939,24 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         }
     }
 
-    // —— 脸部：颌 / 嘴（细表情骨，如 blackMan）——
+    // —— 脸部：张嘴仍用骨；笑/眉/颊等走 morph（避免几十次全骨表扫描卡顿）——
     const bool useFaceBones = impl_->ourModel->hasDetailedFaceBones();
-    const float jaw = weightOr(faceWeights, "jawOpen");
-    const float smileL = weightOr(faceWeights, "mouthSmileLeft");
-    const float smileR = weightOr(faceWeights, "mouthSmileRight");
-    const float frownL = weightOr(faceWeights, "mouthFrownLeft");
-    const float frownR = weightOr(faceWeights, "mouthFrownRight");
-    const float pucker = weightOr(faceWeights, "mouthPucker");
     if (useFaceBones) {
-    if (jaw > 0.001f) {
-        glm::mat4 m = glm::rotate(glm::mat4(1.0f), jaw * 0.55f, glm::vec3(1, 0, 0));
-        addBoneOverrideContaining(overrides, bones, "jawbone", m, "ret");
-        addBoneOverrideContaining(overrides, bones, "c_jawbone", m, "ret");
-    }
-    if (smileL > 0.001f) {
-        glm::mat4 m = glm::rotate(glm::mat4(1.0f), smileL * 0.35f, glm::vec3(0, 0, 1));
-        addBoneOverrideContaining(overrides, bones, "lips_smile.l", m);
-        addBoneOverrideContaining(overrides, bones, "c_lips_smile.l", m);
-    }
-    if (smileR > 0.001f) {
-        glm::mat4 m = glm::rotate(glm::mat4(1.0f), -smileR * 0.35f, glm::vec3(0, 0, 1));
-        addBoneOverrideContaining(overrides, bones, "lips_smile.r", m);
-        addBoneOverrideContaining(overrides, bones, "c_lips_smile.r", m);
-    }
-    if (frownL > 0.001f || frownR > 0.001f) {
-        float f = std::max(frownL, frownR);
-        glm::mat4 m = glm::rotate(glm::mat4(1.0f), -f * 0.25f, glm::vec3(1, 0, 0));
-        addBoneOverrideContaining(overrides, bones, "lips_smile", m);
-    }
-    if (pucker > 0.001f) {
-        glm::mat4 m = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f - pucker * 0.08f, 1.0f, 1.0f + pucker * 0.05f));
-        addBoneOverrideContaining(overrides, bones, "c_lips", m, "smile");
-    }
+        const float jaw = weightOr(faceWeights, "jawOpen");
+        const float jawL = weightOr(faceWeights, "jawLeft");
+        const float jawR = weightOr(faceWeights, "jawRight");
+        const float mouthClose = weightOr(faceWeights, "mouthClose");
+        float jawAmt = fmaxf(0.f, jaw - mouthClose * 0.35f);
+        if (jawAmt > 0.001f) {
+            glm::mat4 m = glm::rotate(glm::mat4(1.0f), jawAmt * 0.55f, glm::vec3(1, 0, 0));
+            addFaceBoneOverride(overrides, bones, "c_jawbone", m);
+            addFaceBoneOverride(overrides, bones, "jawbone.x", m);
+        }
+        if (jawL > 0.001f || jawR > 0.001f) {
+            glm::mat4 m = glm::rotate(glm::mat4(1.0f), (jawL - jawR) * 0.25f, glm::vec3(0, 1, 0));
+            addFaceBoneOverride(overrides, bones, "c_jawbone", m);
+            addFaceBoneOverride(overrides, bones, "jawbone.x", m);
+        }
     }
 
     // —— 眼球：只转 c_eye_ref_track（不碰眼眶）；注视角来自 projector（眼变换优先）——
@@ -975,18 +989,21 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
             m.a3, m.b3, m.c3, m.d3,
             m.a4, m.b4, m.c4, m.d4);
     };
-    std::map<std::string, glm::mat4> nodeBind;
-    if (impl_->ourModel->getAnimation() && impl_->ourModel->getAnimation()->getScene()) {
+    if (!impl_->cachedNodeBindValid &&
+        impl_->ourModel->getAnimation() && impl_->ourModel->getAnimation()->getScene()) {
+        impl_->cachedNodeBind.clear();
         const aiNode* root = impl_->ourModel->getAnimation()->getScene()->mRootNode;
         std::vector<const aiNode*> stack;
         if (root) stack.push_back(root);
         while (!stack.empty()) {
             const aiNode* n = stack.back();
             stack.pop_back();
-            nodeBind[n->mName.C_Str()] = aiMat(n->mTransformation);
+            impl_->cachedNodeBind[n->mName.C_Str()] = aiMat(n->mTransformation);
             for (unsigned i = 0; i < n->mNumChildren; ++i) stack.push_back(n->mChildren[i]);
         }
+        impl_->cachedNodeBindValid = true;
     }
+    const auto& nodeBind = impl_->cachedNodeBind;
 
     // 绕眼窝：T * gaze * RS（完整局部，Animator 里 replace）
     auto orbitGaze = [&](const glm::mat4& bind, const glm::mat4& gaze) {
@@ -1045,13 +1062,21 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     applyEyelid(false, blinkR, squintR, wideR);
     }
 
-    // —— Morph：whiteMan 等无细脸骨时用 ARKit 权重驱动 ——
+    // —— Morph：脸部表情主通道（有细脸骨时也启用）——
+    // 只写入 faceWeights，绝不写 eye*，避免动到现有眨眼/注视。
+    // 张嘴仍主要由 jaw 骨驱动，morph 里去掉 jaw* 防止张嘴叠两层。
     bool appliedMorphs = false;
-    if (!useFaceBones && impl_->ourModel->hasMorphTargets()) {
-        std::map<std::string, float> allW = faceWeights;
-        for (const auto& kv : eyeWeights) allW[kv.first] = kv.second;
-        // 也写入 Look 权重（若模型有 52 morph）；44 目标会自动忽略
-        impl_->ourModel->setMorphWeightsByName(allW);
+    if (impl_->ourModel->hasMorphTargets()) {
+        std::map<std::string, float> faceMorph = faceWeights;
+        faceMorph.erase("jawOpen");
+        faceMorph.erase("jawLeft");
+        faceMorph.erase("jawRight");
+        faceMorph.erase("jawForward");
+        if (!useFaceBones) {
+            // 无细脸骨模型：眼部 morph 也需要（blink 等）
+            for (const auto& kv : eyeWeights) faceMorph[kv.first] = kv.second;
+        }
+        impl_->ourModel->setMorphWeightsByName(faceMorph);
         appliedMorphs = true;
     }
 
