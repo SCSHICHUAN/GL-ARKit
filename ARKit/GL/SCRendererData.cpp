@@ -105,9 +105,9 @@ static void applyFormatLayout(CatalogEntry& e) {
         e.xOffset = 0.1f;
         e.defaultYawDeg = 0.0f;
         // whiteMan / blackMan 扶正后仍略前倾，初始化后仰一点（Wolf 等 FBX 不走这里）
-        e.defaultPitchDeg = -0.0f;
+        e.defaultPitchDeg = 10.0f;
         e.cameraY = 0.0f;
-        e.cameraZ = 2.9f;
+        e.cameraZ = 3.5f;
     } else {
         // obj/dae 等
         e.scale = 1.0f;
