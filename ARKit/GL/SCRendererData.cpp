@@ -945,7 +945,7 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     }
     }
 
-    // —— 眼球：与眼皮同一风格——Look 权重直接驱动；只转 ref_track（不碰眼眶父骨）——
+    // —— 眼球：只转 c_eye_ref_track（不碰眼眶）；注视角来自 projector（眼变换优先）——
     const float blinkL = weightOr(eyeWeights, "eyeBlinkLeft");
     const float blinkR = weightOr(eyeWeights, "eyeBlinkRight");
     const float wideL = weightOr(eyeWeights, "eyeWideLeft");
@@ -953,20 +953,11 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     const float squintL = weightOr(eyeWeights, "eyeSquintLeft");
     const float squintR = weightOr(eyeWeights, "eyeSquintRight");
 
-    // 优先用传入的 pitch/yaw（已与 blink 同步平滑）；若几乎为 0 再从 Look 权重现算
-    float pitch = 0.5f * (eyePitchL + eyePitchR);
-    float yaw = 0.5f * (eyeYawL + eyeYawR);
-    if (fabsf(pitch) + fabsf(yaw) < 0.02f) {
-        const float k = 0.95f;
-        float pL = (weightOr(eyeWeights, "eyeLookUpLeft") - weightOr(eyeWeights, "eyeLookDownLeft")) * k;
-        float pR = (weightOr(eyeWeights, "eyeLookUpRight") - weightOr(eyeWeights, "eyeLookDownRight")) * k;
-        float yL = (weightOr(eyeWeights, "eyeLookInLeft") - weightOr(eyeWeights, "eyeLookOutLeft")) * k;
-        float yR = (weightOr(eyeWeights, "eyeLookOutRight") - weightOr(eyeWeights, "eyeLookInRight")) * k;
-        pitch = 0.5f * (pL + pR);
-        yaw = 0.5f * (yL + yR);
-    }
-    pitch = fmaxf(-0.70f, fminf(0.70f, pitch));
-    yaw = fmaxf(-0.70f, fminf(0.70f, yaw));
+    // 只用 projector 给出的 pitch/yaw（眼变换连续源）；不再用 Look 权重回退，避免正前方硬切跳动
+    float pitchL = fmaxf(-0.85f, fminf(0.85f, eyePitchL));
+    float yawL   = fmaxf(-0.95f, fminf(0.95f, eyeYawL));
+    float pitchR = fmaxf(-0.85f, fminf(0.85f, eyePitchR));
+    float yawR   = fmaxf(-0.95f, fminf(0.95f, eyeYawR));
 
     auto eyeLookMat = [](float p, float y) {
         glm::mat4 m(1.0f);
@@ -974,7 +965,8 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         m = glm::rotate(m, y, glm::vec3(0, 1, 0));
         return m;
     };
-    glm::mat4 gaze = eyeLookMat(pitch, yaw);
+    glm::mat4 gazeL = eyeLookMat(pitchL, yawL);
+    glm::mat4 gazeR = eyeLookMat(pitchR, yawR);
 
     auto aiMat = [](const aiMatrix4x4& m) {
         return glm::mat4(
@@ -997,7 +989,7 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     }
 
     // 绕眼窝：T * gaze * RS（完整局部，Animator 里 replace）
-    auto orbitGaze = [&](const glm::mat4& bind) {
+    auto orbitGaze = [&](const glm::mat4& bind, const glm::mat4& gaze) {
         glm::mat4 rs = bind;
         rs[3] = glm::vec4(0, 0, 0, 1);
         return glm::translate(glm::mat4(1.0f), glm::vec3(bind[3])) * gaze * rs;
@@ -1009,7 +1001,8 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         if (bn.find("c_eye_ref_track") == std::string::npos) continue;
         auto bit = nodeBind.find(kv.first);
         if (bit == nodeBind.end()) continue;
-        overrides[kv.first] = orbitGaze(bit->second);
+        const bool isRight = (bn.find(".r") != std::string::npos || bn.find("_r") != std::string::npos);
+        overrides[kv.first] = orbitGaze(bit->second, isRight ? gazeR : gazeL);
     }
 
     // whiteMan 等简骨：LeftEye_00 / RightEye_07 / Left_Eye
@@ -1024,7 +1017,7 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
             if (!left && !right) continue;
             auto bit = nodeBind.find(kv.first);
             if (bit == nodeBind.end()) continue;
-            overrides[kv.first] = orbitGaze(bit->second);
+            overrides[kv.first] = orbitGaze(bit->second, right ? gazeR : gazeL);
         }
     }
 

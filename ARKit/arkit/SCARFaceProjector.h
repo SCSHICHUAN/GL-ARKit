@@ -35,7 +35,7 @@ typedef NS_ENUM(NSInteger, SCARFaceMorphChannel) {
 @property (nonatomic, assign) NSInteger activeFaceCount;
 @property (nonatomic, assign, readonly) NSInteger activeMorphCount;
 
-/// 由 left/rightEyeTransform 解出的注视角（弧度，相对脸部朝前）；无眼变换时用 blendShape 近似
+/// 由 left/rightEyeTransform 解出的注视角（弧度，相对休息姿态）；无眼变换时用 Look blendShape 回退
 @property (nonatomic, assign) float eyePitchLeft;
 @property (nonatomic, assign) float eyeYawLeft;
 @property (nonatomic, assign) float eyePitchRight;

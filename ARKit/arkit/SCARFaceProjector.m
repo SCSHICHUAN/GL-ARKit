@@ -27,23 +27,30 @@
 @property (nonatomic, assign) simd_quatf smoothOrientation;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *smoothWeights;
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *aliasToCanonical;
+@property (nonatomic, assign) BOOL hasSmoothedGaze;
+@property (nonatomic, assign) BOOL hasRestGaze;
+@property (nonatomic, assign) simd_quatf restEyeQuatL;
+@property (nonatomic, assign) simd_quatf restEyeQuatR;
+@property (nonatomic, assign) simd_quatf smoothEyeQuatL;
+@property (nonatomic, assign) simd_quatf smoothEyeQuatR;
+/// Look blendShape 回退时的欧拉平滑状态
 @property (nonatomic, assign) float smoothEyePitchL;
 @property (nonatomic, assign) float smoothEyeYawL;
 @property (nonatomic, assign) float smoothEyePitchR;
 @property (nonatomic, assign) float smoothEyeYawR;
-@property (nonatomic, assign) BOOL hasSmoothedGaze;
-@property (nonatomic, assign) BOOL hasRestGaze;
-@property (nonatomic, assign) float restEyePitchL;
-@property (nonatomic, assign) float restEyeYawL;
-@property (nonatomic, assign) float restEyePitchR;
-@property (nonatomic, assign) float restEyeYawR;
 @end
 
-/// 从眼局部矩阵解 pitch/yaw（脸空间：Y 上，眼朝 -Z）
-static void SCARPitchYawFromEyeTransform(simd_float4x4 eye, float *outPitch, float *outYaw) {
-    // 局部 -Z 为视线方向
-    simd_float3 forward = simd_normalize(simd_make_float3(
-        -eye.columns[2].x, -eye.columns[2].y, -eye.columns[2].z));
+/// Apple：left/rightEyeTransform 的 +Z 指向瞳孔方向（不是 -Z）。
+/// 用相对休息姿态的四元数再解 pitch/yaw，避免绝对值落在 ±π 附近导致 atan2 跳变。
+static void SCARPitchYawFromRelQuat(simd_quatf rel, float *outPitch, float *outYaw) {
+    simd_float3 forward = simd_act(rel, simd_make_float3(0.f, 0.f, 1.f));
+    float len2 = simd_dot(forward, forward);
+    if (len2 < 1e-12f) {
+        *outPitch = 0.f;
+        *outYaw = 0.f;
+        return;
+    }
+    forward *= 1.f / sqrtf(len2);
     *outPitch = asinf(fmaxf(-1.f, fminf(1.f, forward.y)));
     *outYaw = atan2f(forward.x, forward.z);
 }
@@ -59,6 +66,10 @@ static void SCARPitchYawFromEyeTransform(simd_float4x4 eye, float *outPitch, flo
         _aliasToCanonical = [[self class] defaultAliasMap];
         _restOrientation = simd_quaternion(0.f, 0.f, 0.f, 1.f);
         _smoothOrientation = _restOrientation;
+        _restEyeQuatL = _restOrientation;
+        _restEyeQuatR = _restOrientation;
+        _smoothEyeQuatL = _restOrientation;
+        _smoothEyeQuatR = _restOrientation;
     }
     return self;
 }
@@ -157,66 +168,71 @@ static void SCARPitchYawFromEyeTransform(simd_float4x4 eye, float *outPitch, flo
     out.activeEyeCount = activeEye;
     out.activeFaceCount = activeFace;
 
-    // —— 眼球注视：与眨眼同一路 Look blendShape（已按 smoothing 平滑），不再二次滤波 ——
-    // 眼变换只作「几乎无 Look 信号」时的补充，避免正对时外斜、也避免慢半拍。
-    float lookUpL = eyes[@"eyeLookUpLeft"].floatValue;
-    float lookDownL = eyes[@"eyeLookDownLeft"].floatValue;
-    float lookInL = eyes[@"eyeLookInLeft"].floatValue;
-    float lookOutL = eyes[@"eyeLookOutLeft"].floatValue;
-    float lookUpR = eyes[@"eyeLookUpRight"].floatValue;
-    float lookDownR = eyes[@"eyeLookDownRight"].floatValue;
-    float lookInR = eyes[@"eyeLookInRight"].floatValue;
-    float lookOutR = eyes[@"eyeLookOutRight"].floatValue;
-
-    const float kBS = 0.95f;
-    float pitchL = (lookUpL - lookDownL) * kBS;
-    float pitchR = (lookUpR - lookDownR) * kBS;
-    // 面向相机镜像：看左 → 角色看左（屏幕）
-    float yawL = (lookInL - lookOutL) * kBS;
-    float yawR = (lookOutR - lookInR) * kBS;
-
-    float bsMag = fabsf(pitchL) + fabsf(yawL) + fabsf(pitchR) + fabsf(yawR);
-    if (face.hasEyeTransforms && bsMag < 0.06f) {
-        float tpL = 0, tyL = 0, tpR = 0, tyR = 0;
-        SCARPitchYawFromEyeTransform(face.leftEyeTransform, &tpL, &tyL);
-        SCARPitchYawFromEyeTransform(face.rightEyeTransform, &tpR, &tyR);
+    // —— 眼球注视 ——
+    // 核心：ARKit 瞳孔朝 +Z。旧代码用 -Z → yaw≈±π，atan2 跨缝就一跳一跳。
+    // 做法：相对休息姿态的四元数 slerp，再解小角度 pitch/yaw。
+    float pitchL = 0.f, yawL = 0.f, pitchR = 0.f, yawR = 0.f;
+    if (face.hasEyeTransforms) {
+        simd_quatf qL = simd_quaternion(face.leftEyeTransform);
+        simd_quatf qR = simd_quaternion(face.rightEyeTransform);
         if (!self.hasRestGaze) {
-            self.restEyePitchL = tpL; self.restEyeYawL = tyL;
-            self.restEyePitchR = tpR; self.restEyeYawR = tyR;
+            self.restEyeQuatL = qL;
+            self.restEyeQuatR = qR;
             self.hasRestGaze = YES;
         }
-        // 相对休息；双眼共向；整体镜像
-        float p = 0.5f * ((tpL - self.restEyePitchL) + (tpR - self.restEyePitchR));
-        float y = 0.5f * ((tyL - self.restEyeYawL) + (tyR - self.restEyeYawR));
-        pitchL = pitchR = p * 1.1f;
-        yawL = yawR = -y * 1.1f;
-    } else {
-        // Look 有信号：双眼共向（跟眼皮一样跟手）
-        float p = 0.5f * (pitchL + pitchR);
-        float y = 0.5f * (yawL + yawR);
-        pitchL = pitchR = p;
-        yawL = yawR = y;
-    }
+        simd_quatf relL = simd_mul(simd_inverse(self.restEyeQuatL), qL);
+        simd_quatf relR = simd_mul(simd_inverse(self.restEyeQuatR), qR);
 
-    // 与 morph 同一平滑系数，不再 slew / 二次低通
-    const float ga = fminf(fmaxf(self.smoothing, 0.f), 0.95f);
-    if (!self.hasSmoothedGaze || ga <= 1e-6f) {
-        self.smoothEyePitchL = pitchL;
-        self.smoothEyeYawL = yawL;
-        self.smoothEyePitchR = pitchR;
-        self.smoothEyeYawR = yawR;
-        self.hasSmoothedGaze = YES;
+        const float ga = fminf(fmaxf(self.smoothing, 0.f), 0.95f);
+        if (!self.hasSmoothedGaze || ga <= 1e-6f) {
+            self.smoothEyeQuatL = relL;
+            self.smoothEyeQuatR = relR;
+            self.hasSmoothedGaze = YES;
+        } else {
+            float t = 1.f - ga;
+            self.smoothEyeQuatL = simd_slerp(self.smoothEyeQuatL, relL, t);
+            self.smoothEyeQuatR = simd_slerp(self.smoothEyeQuatR, relR, t);
+        }
+
+        SCARPitchYawFromRelQuat(self.smoothEyeQuatL, &pitchL, &yawL);
+        SCARPitchYawFromRelQuat(self.smoothEyeQuatR, &pitchR, &yawR);
+        // 左右幅度偏小：yaw 放大（pitch 略增）
+        const float kPitch = 1.15f;
+        const float kYaw = 2.0f;
+        pitchL *= kPitch; pitchR *= kPitch;
+        yawL *= kYaw; yawR *= kYaw;
     } else {
-        float t = 1.f - ga;
-        self.smoothEyePitchL += (pitchL - self.smoothEyePitchL) * t;
-        self.smoothEyeYawL += (yawL - self.smoothEyeYawL) * t;
-        self.smoothEyePitchR += (pitchR - self.smoothEyePitchR) * t;
-        self.smoothEyeYawR += (yawR - self.smoothEyeYawR) * t;
+        const float kBS = 0.95f;
+        float pL = (eyes[@"eyeLookUpLeft"].floatValue - eyes[@"eyeLookDownLeft"].floatValue) * kBS;
+        float pR = (eyes[@"eyeLookUpRight"].floatValue - eyes[@"eyeLookDownRight"].floatValue) * kBS;
+        float yL = (eyes[@"eyeLookInLeft"].floatValue - eyes[@"eyeLookOutLeft"].floatValue) * kBS;
+        float yR = (eyes[@"eyeLookOutRight"].floatValue - eyes[@"eyeLookInRight"].floatValue) * kBS;
+        pitchL = pitchR = 0.5f * (pL + pR);
+        yawL = yawR = 0.5f * (yL + yR);
+
+        const float ga = fminf(fmaxf(self.smoothing, 0.f), 0.95f);
+        if (!self.hasSmoothedGaze || ga <= 1e-6f) {
+            self.smoothEyePitchL = pitchL;
+            self.smoothEyeYawL = yawL;
+            self.smoothEyePitchR = pitchR;
+            self.smoothEyeYawR = yawR;
+            self.hasSmoothedGaze = YES;
+        } else {
+            float t = 1.f - ga;
+            self.smoothEyePitchL += (pitchL - self.smoothEyePitchL) * t;
+            self.smoothEyeYawL   += (yawL   - self.smoothEyeYawL)   * t;
+            self.smoothEyePitchR += (pitchR - self.smoothEyePitchR) * t;
+            self.smoothEyeYawR   += (yawR   - self.smoothEyeYawR)   * t;
+        }
+        pitchL = self.smoothEyePitchL;
+        yawL = self.smoothEyeYawL;
+        pitchR = self.smoothEyePitchR;
+        yawR = self.smoothEyeYawR;
     }
-    out.eyePitchLeft = self.smoothEyePitchL;
-    out.eyeYawLeft = self.smoothEyeYawL;
-    out.eyePitchRight = self.smoothEyePitchR;
-    out.eyeYawRight = self.smoothEyeYawR;
+    out.eyePitchLeft = pitchL;
+    out.eyeYawLeft = yawL;
+    out.eyePitchRight = pitchR;
+    out.eyeYawRight = yawR;
     out.eyeGazeValid = YES;
 
     return out;
