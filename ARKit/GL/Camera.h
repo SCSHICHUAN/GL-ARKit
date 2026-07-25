@@ -26,7 +26,8 @@ enum Camera_Movement {
 //默认Camera默认
 const float YAW         = -90.f; //偏航角
 const float PITCH       = 0.0f;  //俯仰角
-const float SPEED       = 4.0f;  //camera移动速度（手机按键要更大一点）
+const float SPEED       = 1.8f;   // W/S 前后速度
+const float STRAFE_SPEED = 0.45f; // A/D 与上下速度（更慢）
 const float SENSITIVITY = 0.1f;  //鼠标灵敏度
 const float ZOOM        = 45.0f; //视野
 
@@ -108,7 +109,8 @@ public:
     // 摄像机平移：W/S 沿视线；A/D 锁水平面（避免 pitch 时左右几乎不动）
     void ProcessKeyboard(Camera_Movement direction, float deltaTime)
     {
-        float velocity = MovementSpeed * deltaTime;
+        float fwdVel = MovementSpeed * deltaTime;
+        float sideVel = STRAFE_SPEED * deltaTime;
         glm::vec3 flatFront = Front;
         flatFront.y = 0.0f;
         if (glm::dot(flatFront, flatFront) > 1e-6f)
@@ -118,17 +120,17 @@ public:
         glm::vec3 flatRight = glm::normalize(glm::cross(flatFront, WorldUp));
 
         if (direction == FORWARD)
-            Position += Front * velocity;
+            Position += Front * fwdVel;
         if (direction == BACKWARD)
-            Position -= Front * velocity;
+            Position -= Front * fwdVel;
         if (direction == LEFT)
-            Position -= flatRight * velocity;
+            Position -= flatRight * sideVel;
         if (direction == RIGHT)
-            Position += flatRight * velocity;
+            Position += flatRight * sideVel;
         if (direction == UPWARD)
-            Position += Up * velocity;
+            Position += Up * sideVel;
         if (direction == DOWN)
-            Position -= Up * velocity;
+            Position -= Up * sideVel;
     }
 
     // 摄像机旋转
