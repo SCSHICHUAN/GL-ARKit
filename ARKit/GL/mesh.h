@@ -19,6 +19,9 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <algorithm>
+#include <utility>
 
 using namespace std;
 #define MAX_BONE_INFLUENCE 4
@@ -83,19 +86,78 @@ public:
     vector<Vertex>      vertices;  //顶点向量数组
     vector<unsigned int> indices;  //纹理ID数组
     vector<Texture>     textures;  //纹理数组
+    /// local bone slot → global bone id（供蒙皮调色板上传；空=无蒙皮）
+    vector<int>         bonePalette;
+    /// bind 姿势顶点（有 morph 时用于每帧混合）
+    vector<glm::vec3>   bindPositions;
+    /// morph 位移（米）：[morphIndex][vertIndex]
+    vector<vector<glm::vec3>> morphDeltas;
+    vector<string>      morphNames;
     
     unsigned int VAO;
     // constructor
-    Mesh(vector<Vertex> vertices,vector<unsigned int> indices,vector<Texture> textures){
-        this->vertices = vertices;
-        this->indices  = indices;
-        this->textures = textures;
-        
+    Mesh(vector<Vertex> vertices, vector<unsigned int> indices, vector<Texture> textures,
+         vector<int> bonePalette = {},
+         vector<vector<glm::vec3>> morphDeltas = {},
+         vector<string> morphNames = {}){
+        this->vertices = std::move(vertices);
+        this->indices  = std::move(indices);
+        this->textures = std::move(textures);
+        this->bonePalette = std::move(bonePalette);
+        this->morphDeltas = std::move(morphDeltas);
+        this->morphNames = std::move(morphNames);
+        if (!this->morphDeltas.empty()) {
+            this->bindPositions.resize(this->vertices.size());
+            for (size_t i = 0; i < this->vertices.size(); ++i)
+                this->bindPositions[i] = this->vertices[i].Position;
+        }
         setupMesh();
+    }
+
+    bool hasMorphTargets() const { return !morphDeltas.empty(); }
+
+    void setMorphWeights(const vector<float>& weights) {
+        if (morphDeltas.empty() || bindPositions.empty()) return;
+        const size_t nMorph = morphDeltas.size();
+        const size_t nVert = bindPositions.size();
+        for (size_t vi = 0; vi < nVert; ++vi) {
+            glm::vec3 p = bindPositions[vi];
+            for (size_t mi = 0; mi < nMorph; ++mi) {
+                const float w = (mi < weights.size()) ? weights[mi] : 0.0f;
+                if (fabsf(w) < 1e-5f) continue;
+                p += w * morphDeltas[mi][vi];
+            }
+            vertices[vi].Position = p;
+        }
+        uploadPositions();
+    }
+
+    void clearMorphWeights() {
+        if (bindPositions.empty()) return;
+        for (size_t i = 0; i < bindPositions.size(); ++i)
+            vertices[i].Position = bindPositions[i];
+        uploadPositions();
     }
     
     //tender the mesh
-    void Draw(Shader &shader){
+    void Draw(Shader &shader, const map<int, glm::mat4>* globalBoneMatrices = nullptr){
+        // 按本 mesh 调色板上传 finalBonesMatrices[local] = global[palette[local]]
+        {
+            const int kMaxBones = 100;
+            glm::mat4 identity(1.0f);
+            const int n = std::min((int)bonePalette.size(), kMaxBones);
+            for (int local = 0; local < kMaxBones; ++local) {
+                glm::mat4 m = identity;
+                if (local < n && globalBoneMatrices) {
+                    auto it = globalBoneMatrices->find(bonePalette[local]);
+                    if (it != globalBoneMatrices->end())
+                        m = it->second;
+                }
+                string uniformName = "finalBonesMatrices[" + to_string(local) + "]";
+                shader.setMat4(uniformName.c_str(), m);
+            }
+        }
+
         unsigned int diffuseNr  = 1;
         unsigned int specularNr = 1;
         unsigned int normalNr   = 1;
@@ -166,6 +228,14 @@ public:
 private:
     unsigned int VBO,EBO;
     
+    void uploadPositions() {
+        if (!VBO || vertices.empty()) return;
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        // Position 在 Vertex 开头；整包更新更简单稳妥
+        glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), vertices.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
     void setupMesh(){
         //创建
         glGenVertexArrays(1,&VAO);
@@ -174,9 +244,10 @@ private:
         
         glBindVertexArray(VAO);//绑定VAO
         
-        //绑定VBO 和 导入数据
+        //绑定VBO 和 导入数据（有 morph 时 DYNAMIC，便于每帧改顶点）
         glBindBuffer(GL_ARRAY_BUFFER,VBO);
-        glBufferData(GL_ARRAY_BUFFER,vertices.size() * sizeof(Vertex),&vertices[0],GL_STATIC_DRAW);
+        const GLenum usage = morphDeltas.empty() ? GL_STATIC_DRAW : GL_DYNAMIC_DRAW;
+        glBufferData(GL_ARRAY_BUFFER,vertices.size() * sizeof(Vertex),&vertices[0],usage);
         //绑定VBO 和 导入数据
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size() * sizeof(unsigned int),&indices[0],GL_STATIC_DRAW);

@@ -1,6 +1,8 @@
 
 #include "animation.h"
 
+#include <cctype>
+
 static glm::mat4 AiToGlmMat4(const aiMatrix4x4& m) {
     // glm::mat4(...) 的 16 个参数按“列”填充：
     // 第 1 列是 (m00,m10,m20,m30)，第 2 列是 (m01,m11,m21,m31) ...
@@ -222,32 +224,21 @@ Animator::Animator(Animation* animation) {
 
 void Animator::updateAnimation(float dt) {
     deltaTime = dt;
-    if (currentAnimation) {
-        // 播放头步进：格 += (tick/s) * 秒
+    if (!currentAnimation) return;
+
+    if (dt > 0.0f) {
         currentTime += currentAnimation->getTicksPerSecond() * dt;
         if (looping) {
-            currentTime = fmod(currentTime, currentAnimation->getDuration());
+            float dur = currentAnimation->getDuration();
+            if (dur > 0.0f) currentTime = fmod(currentTime, dur);
         } else {
             float d = currentAnimation->getDuration();
             if (currentTime > d) currentTime = d;
         }
-
-        finalBoneMatrices.clear();
-        // 从 Node 树根递归：插值 → 父子连乘 → 写入 finalBonesMatrices[id]
-        calculateBoneTransform(currentAnimation->getScene()->mRootNode, glm::mat4(1.0f));
-
-        // 每隔一段打印一次：确认动画链路确实在产生 bone 矩阵（避免“没看到输出”）
-        static int frames = 0;
-        frames++;
-        if (frames == 1 || frames % 120 == 0) {
-            cout << "[AnimDebug] ticksPerSecond=" << currentAnimation->getTicksPerSecond()
-                 << " duration=" << currentAnimation->getDuration()
-                 << " animIndex=" << currentAnimation->getAnimationIndex()
-                 << " boneInfoMap=" << currentAnimation->getBoneInfoMap().size()
-                 << " finalBoneMatrices=" << finalBoneMatrices.size()
-                 << endl;
-        }
     }
+
+    finalBoneMatrices.clear();
+    calculateBoneTransform(currentAnimation->getScene()->mRootNode, glm::mat4(1.0f));
 }
 
 void Animator::playAnimation(Animation* pAnimation, bool resetTime) {
@@ -264,10 +255,27 @@ void Animator::calculateBoneTransform(const aiNode* node, glm::mat4 parentTransf
     glm::mat4 nodeTransform = AiToGlmMat4(node->mTransformation);
 
     // 按骨名匹配 Channel；无 Channel 则用节点静态变换(绑定姿势)
-    Bone* bone = currentAnimation->findBone(nodeName);
-    if (bone) {
-        bone->update(currentTime);
-        nodeTransform = bone->getLocalTransform();
+    // 有 ARKit 覆盖时：跳过动画通道
+    auto ov = boneLocalOverrides.find(nodeName);
+    if (ov != boneLocalOverrides.end()) {
+        // 眼球：覆盖是完整局部矩阵（绕眼窝转），直接替换
+        // 头/脸：覆盖是增量，叠在绑定姿势后
+        std::string bn = nodeName;
+        for (char& c : bn) c = (char)tolower((unsigned char)c);
+        const bool eyeReplace =
+            bn.find("c_eye_offset") != std::string::npos ||
+            bn.find("c_eye_ref_track") != std::string::npos;
+        if (eyeReplace) {
+            nodeTransform = ov->second;
+        } else {
+            nodeTransform = nodeTransform * ov->second;
+        }
+    } else {
+        Bone* bone = currentAnimation->findBone(nodeName);
+        if (bone) {
+            bone->update(currentTime);
+            nodeTransform = bone->getLocalTransform();
+        }
     }
 
     // 父骨骼全局 × 本骨局部

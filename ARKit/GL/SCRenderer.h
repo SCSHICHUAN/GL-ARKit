@@ -25,6 +25,23 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)playAnimationAtIndex:(NSInteger)index;
 - (void)toggleAnimPause;
 
+/// Bundled character models (auto-scanned from models/).
+- (NSArray<NSString *> *)modelNames;
+- (NSInteger)currentModelIndex;
+- (BOOL)loadModelAtIndex:(NSInteger)index;
+
+/// ARKit 三路投射 → 驱动当前模型（头旋转 + 表情骨骼）。
+- (void)applyFaceProjectionHeadYaw:(float)yaw
+                             pitch:(float)pitch
+                              roll:(float)roll
+                       eyePitchLeft:(float)eyePitchL
+                         eyeYawLeft:(float)eyeYawL
+                      eyePitchRight:(float)eyePitchR
+                        eyeYawRight:(float)eyeYawR
+                        eyeWeights:(NSDictionary<NSString *, NSNumber *> *)eyeWeights
+                       faceWeights:(NSDictionary<NSString *, NSNumber *> *)faceWeights;
+- (void)clearFaceDrive;
+
 @end
 
 NS_ASSUME_NONNULL_END

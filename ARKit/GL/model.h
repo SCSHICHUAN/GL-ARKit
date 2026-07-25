@@ -18,6 +18,7 @@
 #include <cctype>
 #include <functional>
 #include <cstdlib>
+#include <cmath>
 
 #include "gl_platform.h"
 #include "stb_image.h"
@@ -32,7 +33,8 @@
 #include "animation.h"
 using namespace std;
 
-unsigned int TextureFromFile(const char *path, const string &directory,bool gamma = false);
+unsigned int TextureFromFile(const char *path, const string &directory, bool gamma = false);
+unsigned int TextureFromFile(const char *path, const string &directory, const aiScene *scene, bool gamma = false);
 
 static glm::mat4 AiToGlmMat4_Model(const aiMatrix4x4& m) {
     return glm::mat4(
@@ -61,10 +63,10 @@ public:
     Model(string const &path,bool gamma = false) : gammaCorrection(gamma){
         loadModel(path);
     }
-    //画网格
-    void Draw(Shader &shader){
+    //画网格（boneMatrices: globalBoneId → skin matrix；按 mesh 调色板上传）
+    void Draw(Shader &shader, const map<int, glm::mat4>* boneMatrices = nullptr){
         for(unsigned int i = 0; i < meshes.size(); i++)
-            meshes[i].Draw(shader);
+            meshes[i].Draw(shader, boneMatrices);
     }
     //获取骨骼信息映射
     map<string, BoneInfo> &getBoneInfoMap() { return boneInfoMap; }
@@ -88,15 +90,122 @@ public:
     }
     int getAnimationCount() const { return (int)animations.size(); }
     int getMeshCount() const { return meshes.size(); }
+
+    bool hasMorphTargets() const {
+        for (const auto& m : meshes) if (m.hasMorphTargets()) return true;
+        return false;
+    }
+
+    /// 任一 mesh 的最大 morph 数（UnionAvatars 头通常 44）
+    int morphTargetCount() const {
+        int n = 0;
+        for (const auto& m : meshes)
+            n = std::max(n, (int)m.morphDeltas.size());
+        return n;
+    }
+
+    /// jaw / lips / eyelid 等细表情骨（blackMan）；无这些时优先骨驱动，避免 morph 叠两层
+    bool hasDetailedFaceBones() const {
+        for (const auto& kv : boneInfoMap) {
+            string n = kv.first;
+            for (char& c : n) c = (char)std::tolower((unsigned char)c);
+            if (n.find("jawbone") != string::npos) return true;
+            if (n.find("lips_smile") != string::npos) return true;
+            if (n.find("eyelid") != string::npos) return true;
+        }
+        return false;
+    }
+
+    void setMorphWeights(const vector<float>& weights) {
+        for (auto& m : meshes) {
+            if (m.hasMorphTargets()) m.setMorphWeights(weights);
+        }
+    }
+
+    void clearMorphWeights() {
+        for (auto& m : meshes) {
+            if (m.hasMorphTargets()) m.clearMorphWeights();
+        }
+    }
+
+    /// 按 ARKit 规范名写权重；无名 morph 用 52/44 约定顺序
+    void setMorphWeightsByName(const map<string, float>& named) {
+        const int n = morphTargetCount();
+        if (n <= 0) return;
+        vector<string> names = resolveMorphNames(n);
+        vector<float> w(n, 0.0f);
+        for (int i = 0; i < n; ++i) {
+            if (i < (int)names.size() && !names[i].empty()) {
+                auto it = named.find(names[i]);
+                if (it != named.end()) w[i] = it->second;
+            }
+        }
+        setMorphWeights(w);
+    }
+
+    /// 无名 morph：52=完整 ARKit；44=去掉 8 个 eyeLook（眼睛用骨转）
+    static vector<string> defaultArkitMorphNames(int count) {
+        static const char* k52[] = {
+            "eyeBlinkLeft","eyeLookDownLeft","eyeLookInLeft","eyeLookOutLeft","eyeLookUpLeft","eyeSquintLeft","eyeWideLeft",
+            "eyeBlinkRight","eyeLookDownRight","eyeLookInRight","eyeLookOutRight","eyeLookUpRight","eyeSquintRight","eyeWideRight",
+            "jawForward","jawLeft","jawRight","jawOpen",
+            "mouthClose","mouthFunnel","mouthPucker","mouthRight","mouthLeft",
+            "mouthSmileLeft","mouthSmileRight","mouthFrownLeft","mouthFrownRight",
+            "mouthDimpleLeft","mouthDimpleRight","mouthStretchLeft","mouthStretchRight",
+            "mouthRollLower","mouthRollUpper","mouthShrugLower","mouthShrugUpper",
+            "mouthPressLeft","mouthPressRight","mouthLowerDownLeft","mouthLowerDownRight",
+            "mouthUpperUpLeft","mouthUpperUpRight",
+            "browDownLeft","browDownRight","browInnerUp","browOuterUpLeft","browOuterUpRight",
+            "cheekPuff","cheekSquintLeft","cheekSquintRight",
+            "noseSneerLeft","noseSneerRight","tongueOut"
+        };
+        vector<string> out;
+        if (count == 52) {
+            out.assign(k52, k52 + 52);
+            return out;
+        }
+        if (count == 51) {
+            out.assign(k52, k52 + 51); // 无 tongueOut
+            return out;
+        }
+        if (count == 44) {
+            for (int i = 0; i < 52; ++i) {
+                string s = k52[i];
+                if (s.find("Look") != string::npos) continue;
+                out.push_back(s);
+            }
+            return out;
+        }
+        return out;
+    }
+
+    vector<string> resolveMorphNames(int count) const {
+        // 优先用 Assimp 里非空的名字（取第一个有 morph 的 mesh）
+        for (const auto& m : meshes) {
+            if ((int)m.morphDeltas.size() != count) continue;
+            bool any = false;
+            for (const auto& n : m.morphNames) if (!n.empty()) { any = true; break; }
+            if (any) {
+                vector<string> names = m.morphNames;
+                names.resize(count);
+                return names;
+            }
+        }
+        return defaultArkitMorphNames(count);
+    }
+
 private:
     //加载模型资源
     void loadModel(string const &path){
         // iOS 使用的 Assimp 5：关闭 FBX pivot 拆分，行为才接近原先桌面版 Assimp
         importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+        // facial_animation 等模型有数百根骨；拆成每 mesh ≤64，才能用 100 槽调色板蒙皮
+        importer.SetPropertyInteger(AI_CONFIG_PP_SBBC_MAX_BONES, 64);
         const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate |
                                                  aiProcess_GenSmoothNormals |
                                                  aiProcess_FlipUVs |
-                                                 aiProcess_CalcTangentSpace);
+                                                 aiProcess_CalcTangentSpace |
+                                                 aiProcess_SplitByBoneCount);
         if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode){
             cout << "ERROR::ASSIMP::" << importer.GetErrorString() << endl;
             return;
@@ -114,7 +223,11 @@ private:
 
         // Assimp FBX：厂商 mOffsetMatrix 常与节点层级不一致 → 蒙皮炸开。
         // 用 bind 姿势重算 offset = inv(boneGlobal) * meshGlobal（不改蒙皮公式）。
-        if (boneCount > 0) {
+        // 注意：glTF/GLB 的 inverseBindMatrices 一般是对的，重算会毁掉 facial_animation 这类多 mesh 皮肤。
+        const bool isFbx = path.size() >= 4 &&
+            (path.compare(path.size() - 4, 4, ".fbx") == 0 ||
+             path.compare(path.size() - 4, 4, ".FBX") == 0);
+        if (isFbx && boneCount > 0) {
             glm::mat4 meshGlobal(1.0f);
             bool foundMesh = false;
             std::function<void(aiNode*, const glm::mat4&)> findMesh =
@@ -263,22 +376,31 @@ private:
                 vec.y = mesh->mTextureCoords[0][i].y;
                 vertex.TexCoords = vec;
 
-                vector.x = mesh->mTangents[i].x;
-                vector.y = mesh->mTangents[i].y;
-                vector.z = mesh->mTangents[i].z;
-                vertex.Tangent = vector;
-
-                vector.x = mesh->mBitangents[i].x;
-                vector.y = mesh->mBitangents[i].y;
-                vector.z = mesh->mBitangents[i].z;
-                vertex.Bitangent = vector;
+                if (mesh->mTangents) {
+                    vector.x = mesh->mTangents[i].x;
+                    vector.y = mesh->mTangents[i].y;
+                    vector.z = mesh->mTangents[i].z;
+                    vertex.Tangent = vector;
+                } else {
+                    vertex.Tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                }
+                if (mesh->mBitangents) {
+                    vector.x = mesh->mBitangents[i].x;
+                    vector.y = mesh->mBitangents[i].y;
+                    vector.z = mesh->mBitangents[i].z;
+                    vertex.Bitangent = vector;
+                } else {
+                    vertex.Bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                }
             }
             else
                 vertex.TexCoords = glm::vec2(0.0f,0.0f);
             vertices.push_back(vertex);
         }
 
-        // Mesh 绑骨：顶点写入 m_BoneIDs + m_Weights（最多4根），登记 boneInfoMap(名→id, offset)
+        // Mesh 绑骨：顶点用「本 mesh 局部骨 id」，palette[local]=globalId（着色器只有 100 槽）
+        vector<int> bonePalette;
+        map<string, int> localBoneIds;
         if (mesh->mNumBones > 0) {
             for (unsigned int i = 0; i < mesh->mNumBones; i++) {
                 aiBone* bone = mesh->mBones[i];
@@ -291,14 +413,28 @@ private:
                     boneInfoMap[boneName] = info;
                     boneCount++;
                 }
+                const int globalId = boneInfoMap[boneName].id;
+
+                int localId;
+                auto lit = localBoneIds.find(boneName);
+                if (lit == localBoneIds.end()) {
+                    localId = (int)bonePalette.size();
+                    localBoneIds[boneName] = localId;
+                    bonePalette.push_back(globalId);
+                } else {
+                    localId = lit->second;
+                }
 
                 for (unsigned int j = 0; j < bone->mNumWeights; j++) {
                     aiVertexWeight weight = bone->mWeights[j];
                     int vertexID = weight.mVertexId;
                     float weightValue = weight.mWeight;
-
-                    vertices[vertexID].addBoneData(boneInfoMap[bone->mName.data].id, weightValue);
+                    vertices[vertexID].addBoneData(localId, weightValue);
                 }
+            }
+            if ((int)bonePalette.size() > 100) {
+                cout << "WARNING: mesh bone palette " << bonePalette.size()
+                     << " > 100 — skinning will clip" << endl;
             }
         }
         //顶点索引
@@ -307,26 +443,84 @@ private:
             for(unsigned int j = 0; j < face.mNumIndices; j++)
                 indices.push_back(face.mIndices[j]);
         }
-        //加载纹理
+        //加载纹理（glTF 常用 BASE_COLOR；FBX 常用 DIFFUSE）
+        // Megumin 等 toon/Sketchfab：颜色只在 emissiveTexture，baseColor 为黑且无贴图
         aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
-        //漫反射
-        vector<Texture> diffuseMaps = loadMaterialTextures(material, aiTextureType_DIFFUSE, "texture_diffuse");
-        textures.insert(textures.end(), diffuseMaps.begin(),diffuseMaps.end());
+        vector<Texture> diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_BASE_COLOR, "texture_diffuse");
+        if (diffuseMaps.empty()) {
+            diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_DIFFUSE, "texture_diffuse");
+        }
+        if (diffuseMaps.empty()) {
+            diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_EMISSIVE, "texture_diffuse");
+        }
+#ifdef AI_TEXTURE_TYPE_MAX
+        if (diffuseMaps.empty()) {
+            diffuseMaps = loadMaterialTextures(scene, material, aiTextureType_EMISSION_COLOR, "texture_diffuse");
+        }
+#endif
+        textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
         //镜面反射
-        vector<Texture> specularMaps = loadMaterialTextures(material, aiTextureType_SPECULAR, "texture_specular");
-        textures.insert(textures.end(), specularMaps.begin(),specularMaps.end());
-        //法线贴图
-        vector<Texture> normalMaps = loadMaterialTextures(material, aiTextureType_NORMALS, "texture_normal");
-        textures.insert(textures.end(), normalMaps.begin(),normalMaps.end());
+        vector<Texture> specularMaps = loadMaterialTextures(scene, material, aiTextureType_SPECULAR, "texture_specular");
+        textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
+        //法线贴图（glTF NORMALS / HEIGHT 偶发混用）
+        vector<Texture> normalMaps = loadMaterialTextures(scene, material, aiTextureType_NORMALS, "texture_normal");
+        if (normalMaps.empty()) {
+            normalMaps = loadMaterialTextures(scene, material, aiTextureType_HEIGHT, "texture_normal");
+        }
+        textures.insert(textures.end(), normalMaps.begin(), normalMaps.end());
         //高度图
-        vector<Texture> heightMaps = loadMaterialTextures(material,aiTextureType_HEIGHT , "texture_height");
-        textures.insert(textures.end(), heightMaps.begin(),heightMaps.end());
+        vector<Texture> heightMaps = loadMaterialTextures(scene, material, aiTextureType_HEIGHT, "texture_height");
+        textures.insert(textures.end(), heightMaps.begin(), heightMaps.end());
+
+        // glTF morph targets → aiAnimMesh（部分资源把绝对 cm 坐标误标成 target）
+        vector<vector<glm::vec3>> morphDeltas;
+        vector<string> morphNames;
+        if (mesh->mNumAnimMeshes > 0 && mesh->mAnimMeshes) {
+            float maxBase = 0.0f;
+            for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+                const aiVector3D& b = mesh->mVertices[i];
+                maxBase = std::max(maxBase, std::fabs(b.x) + std::fabs(b.y) + std::fabs(b.z));
+            }
+            morphDeltas.resize(mesh->mNumAnimMeshes);
+            morphNames.resize(mesh->mNumAnimMeshes);
+            for (unsigned int mi = 0; mi < mesh->mNumAnimMeshes; ++mi) {
+                aiAnimMesh* am = mesh->mAnimMeshes[mi];
+                morphNames[mi] = am && am->mName.length ? am->mName.C_Str() : "";
+                morphDeltas[mi].assign(mesh->mNumVertices, glm::vec3(0.0f));
+                if (!am || !am->mVertices) continue;
+
+                float maxAnim = 0.0f;
+                for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+                    const aiVector3D& t = am->mVertices[i];
+                    maxAnim = std::max(maxAnim, std::fabs(t.x) + std::fabs(t.y) + std::fabs(t.z));
+                }
+                // 绝对形态（常见于 UnionAvatars：厘米）vs 规范 glTF 相对位移
+                const bool absolute = (maxBase > 1e-6f && maxAnim > maxBase * 2.0f);
+                float unit = 1.0f;
+                if (absolute && maxBase > 1e-6f && (maxAnim / maxBase) > 50.0f)
+                    unit = 0.01f; // cm → m
+
+                for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+                    const aiVector3D& b = mesh->mVertices[i];
+                    const aiVector3D& t = am->mVertices[i];
+                    if (absolute) {
+                        morphDeltas[mi][i] = glm::vec3(t.x * unit - b.x, t.y * unit - b.y, t.z * unit - b.z);
+                    } else {
+                        morphDeltas[mi][i] = glm::vec3(t.x, t.y, t.z);
+                    }
+                }
+            }
+            if (!morphDeltas.empty()) {
+                cout << "Mesh morphs: " << morphDeltas.size()
+                     << " (method=" << (int)mesh->mMethod << ")" << endl;
+            }
+        }
 
         //得到  顶点 索引 贴图 生成一个网格
-        return Mesh(vertices,indices,textures);
+        return Mesh(vertices, indices, textures, bonePalette, std::move(morphDeltas), std::move(morphNames));
     };
-    //加载模型中的图片等资源,生成纹理
-    vector<Texture> loadMaterialTextures(aiMaterial *mat,aiTextureType type,string typeName){
+    //加载模型中的图片等资源,生成纹理（支持 GLB 内嵌 *0 / GetEmbeddedTexture）
+    vector<Texture> loadMaterialTextures(const aiScene *scene, aiMaterial *mat, aiTextureType type, string typeName){
         vector<Texture> textures;
         for(unsigned int i = 0; i < mat->GetTextureCount(type); i++){
             aiString str;
@@ -341,8 +535,7 @@ private:
             }
             if(!skip){
                 Texture texture;
-                texture.id = TextureFromFile(str.data, this->directory);//文件名字 + 路径
-//                printf("%s \n",str.C_Str());
+                texture.id = TextureFromFile(str.data, this->directory, scene);
                 texture.type = typeName;
                 texture.path = str.data;
                 textures.push_back(texture);
@@ -354,24 +547,10 @@ private:
 };
 
 
-//加载纹理
-unsigned int TextureFromFile(const char *path, const string &directory, bool gamma){
-    string filename = string(path);
+// 从 Assimp 内嵌贴图或磁盘路径创建 GL 纹理
+unsigned int TextureFromFile(const char *path, const string &directory, const aiScene *scene, bool gamma){
+    string filename = string(path ? path : "");
     replace(filename.begin(), filename.end(), '\\', '/');
-
-    auto tryLoad = [](const string& fullPath, int& width, int& height, int& nrComponents) -> unsigned char* {
-        return stbi_load(fullPath.c_str(), &width, &height, &nrComponents, 0);
-    };
-
-    // 候选路径：原相对路径 / 仅文件名 / textures/文件名（兼容 FBX 里的 Windows 绝对路径）
-    vector<string> candidates;
-    candidates.push_back(directory + '/' + filename);
-    {
-        size_t slash = filename.find_last_of('/');
-        string base = (slash == string::npos) ? filename : filename.substr(slash + 1);
-        candidates.push_back(directory + '/' + base);
-        candidates.push_back(directory + "/textures/" + base);
-    }
 
     unsigned int textureID;
     glGenTextures(1, &textureID);
@@ -379,14 +558,94 @@ unsigned int TextureFromFile(const char *path, const string &directory, bool gam
     int width = 0, height = 0, nrComponents = 0;
     unsigned char *data = nullptr;
     string loadedPath;
-    for (const auto& cand : candidates) {
-        data = tryLoad(cand, width, height, nrComponents);
-        if (data) { loadedPath = cand; break; }
+    bool freeWithStbi = true;
+
+    // 1) GLB / glTF 内嵌：路径多为 "*0" / "*1" 或可被 GetEmbeddedTexture 解析
+    if (scene && path && path[0] != '\0') {
+        const aiTexture *emb = scene->GetEmbeddedTexture(path);
+        if (emb) {
+            if (emb->mHeight == 0) {
+                // 压缩图（jpeg/png）存在 pcData，长度 = mWidth
+                data = stbi_load_from_memory(
+                    reinterpret_cast<const stbi_uc*>(emb->pcData),
+                    (int)emb->mWidth,
+                    &width, &height, &nrComponents, 0);
+                loadedPath = string("embedded:") + path;
+            } else {
+                // 未压缩：Assimp 为 aiTexel(BGRA) 数组
+                width = (int)emb->mWidth;
+                height = (int)emb->mHeight;
+                nrComponents = 4;
+                data = (unsigned char*)malloc((size_t)width * (size_t)height * 4);
+                freeWithStbi = false;
+                for (int i = 0; i < width * height; ++i) {
+                    const aiTexel &t = emb->pcData[i];
+                    data[i*4+0] = t.r;
+                    data[i*4+1] = t.g;
+                    data[i*4+2] = t.b;
+                    data[i*4+3] = t.a;
+                }
+                loadedPath = string("embedded_raw:") + path;
+            }
+        }
+    }
+
+    // 2) 磁盘候选路径
+    if (!data) {
+        auto tryLoad = [](const string& fullPath, int& w, int& h, int& n) -> unsigned char* {
+            return stbi_load(fullPath.c_str(), &w, &h, &n, 0);
+        };
+        vector<string> candidates;
+        candidates.push_back(directory + '/' + filename);
+        {
+            size_t slash = filename.find_last_of('/');
+            string base = (slash == string::npos) ? filename : filename.substr(slash + 1);
+            // Assimp/Blender 常带 ".001" 后缀：Image_5.001 → Image_5.png
+            string stem = base;
+            size_t dot = stem.find_last_of('.');
+            if (dot != string::npos) {
+                string ext = stem.substr(dot);
+                string nameOnly = stem.substr(0, dot);
+                // 去掉末尾 .数字 版本号
+                size_t d2 = nameOnly.find_last_of('.');
+                if (d2 != string::npos) {
+                    bool allDigit = true;
+                    for (size_t i = d2 + 1; i < nameOnly.size(); ++i) {
+                        if (nameOnly[i] < '0' || nameOnly[i] > '9') { allDigit = false; break; }
+                    }
+                    if (allDigit) nameOnly = nameOnly.substr(0, d2);
+                }
+                stem = nameOnly;
+                auto pushBase = [&](const string& b) {
+                    candidates.push_back(directory + '/' + b);
+                    candidates.push_back(directory + "/textures/" + b);
+                    candidates.push_back(directory + "/TEXTURES/" + b);
+                    candidates.push_back(directory + "/../textures/" + b);
+                    candidates.push_back(directory + "/../TEXTURES/" + b);
+                };
+                pushBase(base);
+                pushBase(stem + ext);
+                pushBase(stem + ".png");
+                pushBase(stem + ".PNG");
+                pushBase(stem + ".jpg");
+                pushBase(stem + ".jpeg");
+            } else {
+                candidates.push_back(directory + '/' + base);
+                candidates.push_back(directory + "/textures/" + base);
+                candidates.push_back(directory + "/TEXTURES/" + base);
+                candidates.push_back(directory + "/../textures/" + base);
+                candidates.push_back(directory + "/../TEXTURES/" + base);
+                candidates.push_back(directory + "/../textures/" + base + ".png");
+            }
+        }
+        for (const auto& cand : candidates) {
+            data = tryLoad(cand, width, height, nrComponents);
+            if (data) { loadedPath = cand; freeWithStbi = true; break; }
+        }
     }
 
     if (data)
     {
-        // OpenGL ES：统一按 RGBA 上传
         unsigned char *rgba = data;
         bool needFreeRgba = false;
         if (nrComponents != 4) {
@@ -398,6 +657,11 @@ unsigned int TextureFromFile(const char *path, const string &directory, bool gam
                     rgba[i*4+1] = data[i];
                     rgba[i*4+2] = data[i];
                     rgba[i*4+3] = 255;
+                } else if (nrComponents == 2) {
+                    rgba[i*4+0] = data[i*2+0];
+                    rgba[i*4+1] = data[i*2+0];
+                    rgba[i*4+2] = data[i*2+0];
+                    rgba[i*4+3] = data[i*2+1];
                 } else {
                     rgba[i*4+0] = data[i*nrComponents+0];
                     rgba[i*4+1] = data[i*nrComponents+1];
@@ -418,12 +682,13 @@ unsigned int TextureFromFile(const char *path, const string &directory, bool gam
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         cout << "Texture OK: " << loadedPath << " (" << width << "x" << height << ")" << endl;
-        stbi_image_free(data);
+        if (freeWithStbi) stbi_image_free(data);
+        else free(data);
         if (needFreeRgba) free(rgba);
     }
     else
     {
-        // 占位：品红，方便辨认加载失败（不是资源没进 bundle 就会看到这个）
+        // 占位：品红 = 贴图加载失败
         unsigned char pink[] = { 255, 0, 255, 255 };
         glBindTexture(GL_TEXTURE_2D, textureID);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, pink);
@@ -433,6 +698,11 @@ unsigned int TextureFromFile(const char *path, const string &directory, bool gam
     }
 
     return textureID;
+}
+
+// 兼容旧签名（无 scene）
+unsigned int TextureFromFile(const char *path, const string &directory, bool gamma){
+    return TextureFromFile(path, directory, nullptr, gamma);
 }
 
 

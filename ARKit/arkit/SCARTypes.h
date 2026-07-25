@@ -1,7 +1,7 @@
 /*
   SCARTypes.h
   Shared ARKit tracking payloads (head / body / face).
-  Not yet wired to the GL model — console / UI dump only.
+  Face dump → SCARFaceProjector 投射后再接模型。
 */
 
 #import <Foundation/Foundation.h>
@@ -35,6 +35,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) SCARHeadData *head;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *blendShapes; // ARBlendShapeLocation → 0..1
 @property (nonatomic, assign) NSInteger geometryVertexCount;
+/// 相对 face anchor 的眼球变换（ARFaceAnchor left/rightEyeTransform）
+@property (nonatomic, assign) simd_float4x4 leftEyeTransform;
+@property (nonatomic, assign) simd_float4x4 rightEyeTransform;
+@property (nonatomic, assign) BOOL hasEyeTransforms;
 @end
 
 NS_ASSUME_NONNULL_END
