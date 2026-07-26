@@ -8,6 +8,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
+#import <ImageIO/ImageIO.h>
 
 static simd_quatf SCARQuatFromTransform(simd_float4x4 m) {
     simd_float3x3 r = {
@@ -151,7 +152,39 @@ static simd_quatf SCARQuatFromTransform(simd_float4x4 m) {
 
 #pragma mark - ARSessionDelegate
 
+- (CGImagePropertyOrientation)imageOrientationForInterface {
+    UIInterfaceOrientation io = UIInterfaceOrientationPortrait;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
+            if ([sc isKindOfClass:[UIWindowScene class]]) {
+                io = ((UIWindowScene *)sc).interfaceOrientation;
+                break;
+            }
+        }
+    }
+    switch (io) {
+        case UIInterfaceOrientationLandscapeLeft:
+            return kCGImagePropertyOrientationUp;
+        case UIInterfaceOrientationLandscapeRight:
+            return kCGImagePropertyOrientationDown;
+        case UIInterfaceOrientationPortraitUpsideDown:
+            return kCGImagePropertyOrientationLeft;
+        default:
+            return kCGImagePropertyOrientationRight;
+    }
+}
+
+- (void)session:(ARSession *)session didUpdateFrame:(ARFrame *)frame {
+    if (!frame.capturedImage) return;
+    if (![self.delegate respondsToSelector:@selector(arSession:didUpdateCapturedImage:orientation:)]) return;
+    // 缓冲仅在本回调内有效；由 delegate 决定是否立刻拷贝投递 Vision
+    [self.delegate arSession:self
+      didUpdateCapturedImage:frame.capturedImage
+                 orientation:[self imageOrientationForInterface]];
+}
+
 - (void)session:(ARSession *)session didUpdateAnchors:(NSArray<__kindof ARAnchor *> *)anchors {
+    // 画面拷贝只在 didUpdateFrame；这里勿再碰 capturedImage
     for (ARAnchor *anchor in anchors) {
         if ([anchor isKindOfClass:[ARFaceAnchor class]]) {
             [self handleFaceAnchor:(ARFaceAnchor *)anchor];

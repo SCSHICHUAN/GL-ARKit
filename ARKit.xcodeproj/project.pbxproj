@@ -22,6 +22,9 @@
 		A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000005 /* ARKit.framework */; };
 		A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000006 /* AVFoundation.framework */; };
 		A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000008 /* SCARFaceProjector.m */; };
+		C51A637EC46C4B53AE5F76B7 /* SCARUpperBodyProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = 8CCA5957B7DE4D9DA75890BA /* SCARUpperBodyProjector.m */; };
+		A1ARKIT0000000000000015 /* SCARPixelBufferCopy.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */; };
+		73A24BDA98B04DE7918C783A /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210E7B73262B484FAB21D6DA /* Vision.framework */; };
 		AABEFF57A9AE45078658E784 /* animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1B4A856417284C869F0E21D1 /* animation.cpp */; };
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
 		CD1B44AF45C3435CAF1A7E99 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = F71CCB474A3146C1BA298D3A /* libc++.tbd */; };
@@ -406,6 +409,11 @@
 		A1ARKIT0000000000000006 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A1ARKIT0000000000000007 /* SCARFaceProjector.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARFaceProjector.h; sourceTree = "<group>"; };
 		A1ARKIT0000000000000008 /* SCARFaceProjector.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARFaceProjector.m; sourceTree = "<group>"; };
+		A6F8AC8B4ACF4CF982FE2E8D /* SCARUpperBodyProjector.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARUpperBodyProjector.h; sourceTree = "<group>"; };
+		8CCA5957B7DE4D9DA75890BA /* SCARUpperBodyProjector.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARUpperBodyProjector.m; sourceTree = "<group>"; };
+		A1ARKIT000000000000000A /* SCARPixelBufferCopy.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARPixelBufferCopy.h; sourceTree = "<group>"; };
+		A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARPixelBufferCopy.m; sourceTree = "<group>"; };
+		210E7B73262B484FAB21D6DA /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
 		A1F79938864F4570805DEFEE /* type_vec1.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_vec1.inl; sourceTree = "<group>"; };
 		A29164DF5D7F4D1DB3F792B9 /* color4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = color4.h; sourceTree = "<group>"; };
 		A34C55A972EE4ABEABFBE482 /* vector_float3_precision.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = vector_float3_precision.hpp; sourceTree = "<group>"; };
@@ -627,6 +635,7 @@
 				810A595570CA44DB90DBCA12 /* libz.tbd in Frameworks */,
 				A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */,
 				A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */,
+				73A24BDA98B04DE7918C783A /* Vision.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -912,6 +921,7 @@
 				9EAF6FEBF847409AB9CB8706 /* libz.tbd */,
 				A1ARKIT0000000000000005 /* ARKit.framework */,
 				A1ARKIT0000000000000006 /* AVFoundation.framework */,
+				210E7B73262B484FAB21D6DA /* Vision.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -933,6 +943,10 @@
 				A1ARKIT0000000000000004 /* SCARKitSession.mm */,
 				A1ARKIT0000000000000007 /* SCARFaceProjector.h */,
 				A1ARKIT0000000000000008 /* SCARFaceProjector.m */,
+				A6F8AC8B4ACF4CF982FE2E8D /* SCARUpperBodyProjector.h */,
+				8CCA5957B7DE4D9DA75890BA /* SCARUpperBodyProjector.m */,
+				A1ARKIT000000000000000A /* SCARPixelBufferCopy.h */,
+				A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */,
 			);
 			path = arkit;
 			sourceTree = "<group>";
@@ -1518,6 +1532,8 @@
 				A1ARKIT0000000000000010 /* SCARTypes.m in Sources */,
 				A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */,
 				A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */,
+				C51A637EC46C4B53AE5F76B7 /* SCARUpperBodyProjector.m in Sources */,
+				A1ARKIT0000000000000015 /* SCARPixelBufferCopy.m in Sources */,
 				17D1891E024A4B69B00F95F7 /* glm.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

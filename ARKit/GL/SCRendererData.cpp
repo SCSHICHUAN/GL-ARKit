@@ -261,12 +261,118 @@ struct SCRendererData::Impl {
     bool faceDriveWarnedNoHead = false;
 
     bool faceDriveActive = false;
+    bool upperBodyDriveActive = false;
+    int lastUpperBodyBoneCount = 0;
+    /// Vision 目标；显示侧 SmoothDamp + 短时速度外推，消阶梯
+    float leanTarget = 0.0f;
+    float leanDisplay = 0.0f;
+    float leanVel = 0.0f;
+    float leanSampleVel = 0.0f;
+    float leanPrevTarget = 0.0f;
+    float leanSampleAge = 0.0f;
+    bool leanHasPrevTarget = false;
+    float leanPublished = 1e9f;
+    bool leanBoneCacheValid = false;
+    struct SpineLeanBone { std::string name; int tier; }; // 1/2/3
+    std::vector<SpineLeanBone> leanSpineBones;
     float arHeadYaw = 0.0f;
     float arHeadPitch = 0.0f;
     float arHeadRoll = 0.0f;
+    /// Face / 上体各自维护，publish 时合并进 Animator（头脸不与躯干抢骨）
+    std::map<std::string, glm::mat4> faceBoneOverrides;
+    std::map<std::string, glm::mat4> upperBodyBoneOverrides;
     /// 节点 bind 局部矩阵缓存（眼球 orbit 用），避免每帧整树遍历
     std::map<std::string, glm::mat4> cachedNodeBind;
     bool cachedNodeBindValid = false;
+
+    void publishBoneOverrides() {
+        if (!animator) return;
+        std::map<std::string, glm::mat4> merged = faceBoneOverrides;
+        for (const auto& kv : upperBodyBoneOverrides) {
+            auto it = merged.find(kv.first);
+            if (it == merged.end()) merged[kv.first] = kv.second;
+            else it->second = it->second * kv.second;
+        }
+        if (merged.empty()) animator->clearBoneLocalOverrides();
+        else animator->setBoneLocalOverrides(merged);
+    }
+
+    void ensureLeanBoneCache() {
+        if (leanBoneCacheValid || !ourModel) return;
+        leanSpineBones.clear();
+        // blackMan：不做躯干 lean
+        if (ourModel->hasDetailedFaceBones()) {
+            leanBoneCacheValid = true;
+            lastUpperBodyBoneCount = 0;
+            printf("[Lean] skip (blackMan)\n");
+            return;
+        }
+        auto isJunk = [](const std::string& bn) {
+            return bn.find("_end") != std::string::npos ||
+                   bn.find("twist") != std::string::npos ||
+                   bn.find("_ref") != std::string::npos;
+        };
+        for (const auto& kv : ourModel->getBoneInfoMap()) {
+            const std::string bn = toLowerCopy(kv.first);
+            if (isJunk(bn)) continue;
+            if (bn.size() >= 2 && bn[0] == 'c' && bn[1] == '_') continue;
+            if (bn.find("spine") == std::string::npos) continue;
+            if (bn.find("shoulder") != std::string::npos) continue;
+            // 只打 Spine1 / Spine2（胸腰以上）；不要最下段 Spine（贴髋/裆）
+            int tier = 0;
+            if (bn.find("spine2") != std::string::npos) tier = 3;
+            else if (bn.find("spine1") != std::string::npos) tier = 2;
+            else continue;
+            leanSpineBones.push_back({kv.first, tier});
+        }
+        leanBoneCacheValid = true;
+        lastUpperBodyBoneCount = (int)leanSpineBones.size();
+        // Wolf 等无 Spine1/2：不算 whiteMan，直接禁用
+        if (leanSpineBones.empty()) {
+            printf("[Lean] skip (no Spine1/Spine2)\n");
+            return;
+        }
+        printf("[Lean] cache bones=%d\n", lastUpperBodyBoneCount);
+        for (const auto& b : leanSpineBones)
+            printf("[Lean]   tier=%d %s\n", b.tier, b.name.c_str());
+    }
+
+    void rebuildUpperBodyFromDisplayLean() {
+        upperBodyBoneOverrides.clear();
+        if (!upperBodyDriveActive || leanSpineBones.empty()) {
+            lastUpperBodyBoneCount = 0;
+            return;
+        }
+        // Spine1 中段 + Spine2 上胸；白模侧倾用局部 Z（此前已验证）
+        const float w2 = 0.75f, w3 = 1.20f;
+        auto leanMat = [](float lean) {
+            return glm::rotate(glm::mat4(1.0f), lean, glm::vec3(0, 0, 1));
+        };
+        glm::mat4 s2 = leanMat(leanDisplay * w2);
+        glm::mat4 s3 = leanMat(leanDisplay * w3);
+        for (const auto& b : leanSpineBones) {
+            if (b.tier == 3) upperBodyBoneOverrides[b.name] = s3;
+            else if (b.tier == 2) upperBodyBoneOverrides[b.name] = s2;
+        }
+        lastUpperBodyBoneCount = (int)upperBodyBoneOverrides.size();
+        leanPublished = leanDisplay;
+        publishBoneOverrides();
+    }
+
+    void clearDriveOverrides() {
+        faceDriveActive = false;
+        upperBodyDriveActive = false;
+        leanTarget = leanDisplay = 0.0f;
+        leanVel = leanSampleVel = 0.0f;
+        leanSampleAge = 0.0f;
+        leanHasPrevTarget = false;
+        leanPublished = 1e9f;
+        faceBoneOverrides.clear();
+        upperBodyBoneOverrides.clear();
+        arHeadYaw = arHeadPitch = arHeadRoll = 0.0f;
+        if (ourModel) ourModel->clearMorphWeights();
+        if (animator) animator->clearBoneLocalOverrides();
+    }
 
     bool moveForward = false, moveBackward = false, moveLeft = false;
     bool moveRight = false, moveUp = false, moveDown = false;
@@ -295,6 +401,17 @@ struct SCRendererData::Impl {
         gExtraAnimKeySlots.clear();
         gBrowseAnimIndex = 0;
         faceDriveWarnedNoHead = false;
+        faceDriveActive = false;
+        upperBodyDriveActive = false;
+        leanTarget = leanDisplay = 0.0f;
+        leanVel = leanSampleVel = 0.0f;
+        leanSampleAge = 0.0f;
+        leanHasPrevTarget = false;
+        leanPublished = 1e9f;
+        leanBoneCacheValid = false;
+        leanSpineBones.clear();
+        faceBoneOverrides.clear();
+        upperBodyBoneOverrides.clear();
         cachedNodeBind.clear();
         cachedNodeBindValid = false;
         modelHasAxisPivot = false;
@@ -408,8 +525,16 @@ struct SCRendererData::Impl {
         if (!gModel || !gAnimator) return;
         Animation* a = gModel->getAnimation(idx);
         if (!a) return;
-        // 手动切动画时退出 Face 驱动，恢复播放
+        // 手动切动画时退出 Face / 上体驱动，恢复播放
         faceDriveActive = false;
+        upperBodyDriveActive = false;
+        leanTarget = leanDisplay = 0.0f;
+        leanVel = leanSampleVel = 0.0f;
+        leanSampleAge = 0.0f;
+        leanHasPrevTarget = false;
+        leanPublished = 1e9f;
+        faceBoneOverrides.clear();
+        upperBodyBoneOverrides.clear();
         gAnimPaused = false;
         gAnimator->clearBoneLocalOverrides();
         gAnimator->setLooping(loop);
@@ -502,6 +627,25 @@ void SCRendererData::update(float dt) {
     if (impl_->moveRight)    impl_->camera.ProcessKeyboard(RIGHT, dt);
     if (impl_->moveUp)       impl_->camera.ProcessKeyboard(UPWARD, dt);
     if (impl_->moveDown)     impl_->camera.ProcessKeyboard(DOWN, dt);
+
+    // 上体 lean：仅 SmoothDamp 追目标（不做速度外推，避免一卡一冲）
+    if (impl_->upperBodyDriveActive && impl_->animator) {
+        const float smoothTime = 0.14f;
+        float omega = 2.0f / fmaxf(smoothTime, 1e-4f);
+        float x = omega * fmaxf(dt, 0.0f);
+        float exp = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        float change = impl_->leanDisplay - impl_->leanTarget;
+        float temp = (impl_->leanVel + omega * change) * fmaxf(dt, 0.0f);
+        impl_->leanVel = (impl_->leanVel - omega * temp) * exp;
+        impl_->leanDisplay = impl_->leanTarget + (change + temp) * exp;
+
+        const float kMax = 40.0f * 0.01745329252f; // ±40°
+        if (impl_->leanDisplay > kMax) impl_->leanDisplay = kMax;
+        if (impl_->leanDisplay < -kMax) impl_->leanDisplay = -kMax;
+
+        if (fabsf(impl_->leanDisplay - impl_->leanPublished) > 0.00015f)
+            impl_->rebuildUpperBodyFromDisplayLean();
+    }
 
     if (impl_->animator) {
         const float step = (impl_->gEnableAnimation && !impl_->gAnimPaused) ? dt : 0.0f;
@@ -1120,26 +1264,65 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         appliedMorphs = true;
     }
 
-    // 当前模型没有可驱动的脸/头骨/morph（如 Wolf）
-    if (overrides.empty() && !appliedMorphs) {
+    // Face 覆盖与上体分开存，再合并发布（避免互相冲掉）
+    impl_->faceBoneOverrides = std::move(overrides);
+    if (impl_->faceBoneOverrides.empty() && !appliedMorphs) {
         impl_->faceDriveActive = false;
-        impl_->animator->clearBoneLocalOverrides();
-        return;
+        impl_->arHeadYaw = impl_->arHeadPitch = impl_->arHeadRoll = 0.0f;
+        if (impl_->ourModel) impl_->ourModel->clearMorphWeights();
+    } else {
+        impl_->faceDriveActive = true;
     }
+    // 不暂停骨骼动画：身体继续播；头/眼/脸 + 上体 override 叠在动画上
+    impl_->publishBoneOverrides();
+}
 
-    impl_->faceDriveActive = true;
-    // 不暂停骨骼动画：身体继续播；头/眼/脸用 override 叠在动画上（见 Animator）
-    impl_->animator->setBoneLocalOverrides(overrides);
+int SCRendererData::applyUpperBodyLean(float torsoLeanRad) {
+    if (!impl_ || !impl_->ourModel || !impl_->animator) {
+        if (impl_) impl_->lastUpperBodyBoneCount = 0;
+        return 0;
+    }
+    impl_->ensureLeanBoneCache();
+    if (impl_->leanSpineBones.empty()) {
+        impl_->upperBodyDriveActive = false;
+        impl_->lastUpperBodyBoneCount = 0;
+        return 0;
+    }
+    const float kMax = 40.0f * 0.01745329252f; // ±40°
+    float next = torsoLeanRad;
+    if (next > kMax) next = kMax;
+    if (next < -kMax) next = -kMax;
+    // 同值不重置，避免 60Hz 重复 apply 干扰平滑
+    if (fabsf(next - impl_->leanTarget) > 1e-4f)
+        impl_->leanTarget = next;
+    impl_->upperBodyDriveActive = true;
+    impl_->lastUpperBodyBoneCount = (int)impl_->leanSpineBones.size();
+    return impl_->lastUpperBodyBoneCount;
+}
+
+void SCRendererData::clearUpperBodyDrive() {
+    if (!impl_) return;
+    impl_->upperBodyDriveActive = false;
+    impl_->leanTarget = impl_->leanDisplay = 0.0f;
+    impl_->leanVel = impl_->leanSampleVel = 0.0f;
+    impl_->leanSampleAge = 0.0f;
+    impl_->leanHasPrevTarget = false;
+    impl_->leanPublished = 1e9f;
+    impl_->lastUpperBodyBoneCount = 0;
+    impl_->upperBodyBoneOverrides.clear();
+    impl_->publishBoneOverrides();
 }
 
 void SCRendererData::clearFaceDrive() {
     if (!impl_) return;
-    impl_->faceDriveActive = false;
-    impl_->arHeadYaw = impl_->arHeadPitch = impl_->arHeadRoll = 0.0f;
-    if (impl_->ourModel) impl_->ourModel->clearMorphWeights();
-    if (impl_->animator) impl_->animator->clearBoneLocalOverrides();
+    impl_->clearDriveOverrides();
+    impl_->lastUpperBodyBoneCount = 0;
 }
 
 bool SCRendererData::isFaceDriveActive() const {
     return impl_ && impl_->faceDriveActive;
+}
+
+int SCRendererData::lastUpperBodyBoneCount() const {
+    return impl_ ? impl_->lastUpperBodyBoneCount : 0;
 }

@@ -299,6 +299,15 @@ static std::map<std::string, float> SCMapFromWeightDict(NSDictionary<NSString *,
                               SCMapFromWeightDict(faceWeights));
 }
 
+- (NSInteger)applyUpperBodyLean:(float)lean {
+    if (!self.data) return 0;
+    return (NSInteger)self.data->applyUpperBodyLean(lean);
+}
+
+- (void)clearUpperBodyDrive {
+    if (self.data) self.data->clearUpperBodyDrive();
+}
+
 - (void)clearFaceDrive {
     if (self.data) self.data->clearFaceDrive();
 }

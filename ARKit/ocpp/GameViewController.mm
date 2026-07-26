@@ -7,6 +7,8 @@
 #import "SCRenderer.h"
 #import "SCARKitSession.h"
 #import "SCARFaceProjector.h"
+#import "SCARUpperBodyProjector.h"
+#import <QuartzCore/QuartzCore.h>
 #import <math.h>
 
 static NSString * const kAnimCellId = @"AnimClipCell";
@@ -58,16 +60,22 @@ static NSString * const kModelCellId = @"ModelCell";
 @property (nonatomic, assign) NSInteger selectedModelIndex;
 @property (nonatomic, strong) SCARKitSession *arSession;
 @property (nonatomic, strong) SCARFaceProjector *faceProjector;
+@property (nonatomic, strong) SCARUpperBodyProjector *upperBodyProjector;
 /// 合并 AR 回调，避免主队列堆积造成眼球一跳一跳
 @property (nonatomic, assign) BOOL faceDrivePending;
 @property (nonatomic, assign) float pendingHeadYaw, pendingHeadPitch, pendingHeadRoll;
 @property (nonatomic, assign) float pendingEyePitchL, pendingEyeYawL, pendingEyePitchR, pendingEyeYawR;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *pendingEyeWeights;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *pendingFaceWeights;
+@property (nonatomic, assign) BOOL pendingUpperBodyValid;
+@property (nonatomic, assign) float pendingTorsoLean;
 @property (nonatomic, copy) NSString *pendingDumpText;
 @property (nonatomic, strong) UIView *loadingOverlay;
 @property (nonatomic, strong) UIActivityIndicatorView *loadingSpinner;
 @property (nonatomic, assign) BOOL modelLoading;
+/// 每显示帧投递/应用 lean（不绑在 Face 回调合并上）
+@property (nonatomic, strong) CADisplayLink *leanDisplayLink;
+@property (nonatomic, assign) NSInteger lastLeanBoneCount;
 @end
 
 @implementation GameViewController
@@ -90,6 +98,8 @@ static NSString * const kModelCellId = @"ModelCell";
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
+    [self.leanDisplayLink invalidate];
+    self.leanDisplayLink = nil;
     [self.arSession stop];
 }
 
@@ -100,6 +110,10 @@ static NSString * const kModelCellId = @"ModelCell";
     self.arSession.delegate = self;
     self.arSession.logInterval = 0.5;
     self.faceProjector = [[SCARFaceProjector alloc] init];
+    self.upperBodyProjector = [[SCARUpperBodyProjector alloc] init];
+    [self.leanDisplayLink invalidate];
+    self.leanDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickUpperBodyLean:)];
+    [self.leanDisplayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 
     BOOL faceOK = [SCARKitSession isFaceTrackingSupported];
     BOOL bodyOK = [SCARKitSession isBodyTrackingSupported];
@@ -121,6 +135,8 @@ static NSString * const kModelCellId = @"ModelCell";
         ? SCARKitTrackingModeBody
         : SCARKitTrackingModeFace;
     [self.faceProjector reset];
+    [self.upperBodyProjector reset];
+    [self.glView clearUpperBodyDrive];
     [self.arSession switchToMode:next];
     [self refreshARModeButton];
 }
@@ -159,13 +175,21 @@ static NSString * const kModelCellId = @"ModelCell";
     float cheek = [proj.faceWeights[@"cheekPuff"] floatValue];
     float blink = ([proj.eyeWeights[@"eyeBlinkLeft"] floatValue] +
                    [proj.eyeWeights[@"eyeBlinkRight"] floatValue]) * 0.5f;
+    SCARUpperBodyDrive *ub = [self.upperBodyProjector latestDrive];
+    NSString *ubLine = @"LEAN: no pose (双肩入镜)";
+    if (ub.valid) {
+        ubLine = [NSString stringWithFormat:@"LEAN=%.0f° (±40) Vision≈%.0fHz bones=%ld",
+                  ub.torsoLean * 180.f / (float)M_PI,
+                  self.upperBodyProjector.measuredHz, (long)self.lastLeanBoneCount];
+    }
     NSString *text = [NSString stringWithFormat:
                       @"DRIVE HEAD ypr=(%.2f, %.2f, %.2f)\n"
                       @"EYE L py=(%.2f,%.2f) R=(%.2f,%.2f) blink=%.2f\n"
-                      @"FACE smile=%.2f brow=%.2f cheek=%.2f jaw=%.2f",
+                      @"FACE smile=%.2f brow=%.2f cheek=%.2f jaw=%.2f\n%@",
                       yaw, pitch, roll, ePL, eYL, ePR, eYR, blink,
                       smile * 0.5f, brow, cheek,
-                      [proj.faceWeights[@"jawOpen"] floatValue]];
+                      [proj.faceWeights[@"jawOpen"] floatValue],
+                      ubLine];
 
     self.pendingHeadYaw = yaw;
     self.pendingHeadPitch = pitch;
@@ -195,7 +219,26 @@ static NSString * const kModelCellId = @"ModelCell";
     });
 }
 
+/// ARFrame 回调内：缓冲仍有效；忙则跳过拷贝
+- (void)arSession:(SCARKitSession *)session
+didUpdateCapturedImage:(CVPixelBufferRef)image
+      orientation:(CGImagePropertyOrientation)orientation {
+    (void)session;
+    [self.upperBodyProjector submitLivePixelBuffer:image orientation:orientation];
+}
+
+/// 每显示帧只把已算好的 lean 送进渲染（不再拷贝相机帧）
+- (void)tickUpperBodyLean:(CADisplayLink *)link {
+    (void)link;
+    if (!self.upperBodyProjector) return;
+    SCARUpperBodyDrive *ub = [self.upperBodyProjector latestDrive];
+    if (ub.valid) {
+        self.lastLeanBoneCount = [self.glView applyUpperBodyLean:ub.torsoLean];
+    }
+}
+
 - (void)arSession:(SCARKitSession *)session didUpdateBody:(SCARBodyData *)body {
+    [self.upperBodyProjector reset];
     [self.glView clearFaceDrive];
     NSInteger tracked = 0;
     for (SCARBodyJoint *j in body.joints) {
@@ -292,7 +335,7 @@ static NSString * const kModelCellId = @"ModelCell";
 
     self.arDumpLabel = [[UILabel alloc] init];
     self.arDumpLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.arDumpLabel.numberOfLines = 3;
+    self.arDumpLabel.numberOfLines = 5;
     self.arDumpLabel.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightRegular];
     self.arDumpLabel.textColor = UIColor.greenColor;
     self.arDumpLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];

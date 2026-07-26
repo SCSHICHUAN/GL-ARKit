@@ -5,6 +5,8 @@
 */
 
 #import <Foundation/Foundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <ImageIO/ImageIO.h>
 #import "SCARTypes.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -24,6 +26,10 @@ typedef NS_ENUM(NSInteger, SCARKitTrackingMode) {
 - (void)arSession:(SCARKitSession *)session didUpdateBody:(SCARBodyData *)body;
 - (void)arSession:(SCARKitSession *)session didChangeMode:(SCARKitTrackingMode)mode;
 - (void)arSession:(SCARKitSession *)session didFailWithMessage:(NSString *)message;
+/// 仅在本回调栈内有效（勿保存指针）。用于 Vision lean。
+- (void)arSession:(SCARKitSession *)session
+didUpdateCapturedImage:(CVPixelBufferRef)image
+      orientation:(CGImagePropertyOrientation)orientation;
 @end
 
 @interface SCARKitSession : NSObject

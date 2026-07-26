@@ -52,8 +52,12 @@ public:
                         float eyePitchL, float eyeYawL, float eyePitchR, float eyeYawR,
                         const std::map<std::string, float>& eyeWeights,
                         const std::map<std::string, float>& faceWeights);
+    /// Vision 上体左右倾斜（弧度），只打脊柱骨；叠在动画上，与 Face 合并。返回匹配骨数。
+    int applyUpperBodyLean(float torsoLeanRad);
+    void clearUpperBodyDrive();
     void clearFaceDrive();
     bool isFaceDriveActive() const;
+    int lastUpperBodyBoneCount() const;
 
 private:
     struct Impl;

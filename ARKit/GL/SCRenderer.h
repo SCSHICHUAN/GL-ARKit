@@ -40,6 +40,9 @@ NS_ASSUME_NONNULL_BEGIN
                         eyeYawRight:(float)eyeYawR
                         eyeWeights:(NSDictionary<NSString *, NSNumber *> *)eyeWeights
                        faceWeights:(NSDictionary<NSString *, NSNumber *> *)faceWeights;
+/// Vision 上体左右倾斜，叠在动画上。返回匹配骨骼数。
+- (NSInteger)applyUpperBodyLean:(float)lean;
+- (void)clearUpperBodyDrive;
 - (void)clearFaceDrive;
 
 @end

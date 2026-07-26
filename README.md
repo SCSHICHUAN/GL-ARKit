@@ -14,6 +14,7 @@
 | 骨骼动画 | Assimp 剪辑列表 + Pause；Face 驱动时身体动画继续，表情叠加上去 |
 | 相机 | WASD / Up / Dn；单指转模型；双指 FOV；按模型重置机位（狼更远） |
 | AR Face → 模型 | 头姿、注视、眨眼、张嘴、眉嘴颊等表情 |
+| Vision 上体（Face 模式） | 左右倾（仅 whiteMan）；blackMan 不做躯干 lean |
 | AR Body | 关节 / 头数据摘要（不驱动当前人模） |
 | 光照 | 点光 + Blinn-Phong；头发/毛皮双面与材质兜底 |
 
@@ -29,10 +30,11 @@ GL-ARKit/
     ├── arkit/                 # Apple ARKit 封装
     │   ├── SCARTypes.*        # Head / Body / Face 数据
     │   ├── SCARKitSession.*   # Face / Body Session
-    │   └── SCARFaceProjector.*# blendShapes / 眼变换 → 驱动量
+    │   ├── SCARFaceProjector.*# blendShapes / 眼变换 → 驱动量
+    │   └── SCARUpperBodyProjector.* # Vision 人体姿态 → 上体驱动量
     ├── GL/                    # OpenGL ES 场景与 Assimp
     │   ├── SCRenderer.*       # EAGL + DisplayLink + 手势
-    │   ├── SCRendererData.*   # 目录扫描、渲染、applyFaceDrive
+    │   ├── SCRendererData.*   # 目录扫描、渲染、Face / 上体驱动
     │   ├── model.h / mesh.h / animation.* / Camera.h / shader.h
     │   └── gl_platform.h
     ├── ocpp/                  # UI（GameViewController）
@@ -50,19 +52,18 @@ GL-ARKit/
 
 ---
 
-## 数据流（Face 驱动）
+## 数据流（Face + Vision 上体）
 
 ```
-ARFaceAnchor
-  → SCARKitSession          # 头姿 / blendShapes / left·rightEyeTransform
-  → SCARFaceProjector       # 平滑、校准、注视 pitch/yaw、眼/脸权重拆分
-  → GameViewController      # 主队列合并回调
-  → SCRenderer / SCRendererData::applyFaceDrive
-       ├─ 头 / 颈骨
-       ├─ 眼球骨（注视）
-       ├─ 眼皮骨（blackMan 眨眼）
-       └─ Morph（whiteMan 表情+眨眼；blackMan 嘴眉颊）
+ARFaceAnchor + ARFrame.capturedImage
+  → SCARKitSession
+  → SCARFaceProjector              # 头 / 眼 / 表情
+  → SCARUpperBodyProjector         # Vision 肩髋肘腕 → 倾/转/臂
+  → GameViewController             # 主队列合并
+  → applyFaceDrive + applyUpperBodyLean（whiteMan 脊柱侧倾；blackMan 跳过）
 ```
+
+前置 Face 不能开 AR Body；上体靠同一帧画面跑 Vision。切 `AR:Body` 时上体驱动清空。
 
 ---
 
@@ -173,6 +174,7 @@ ARFaceAnchor
 |----|------|
 | OpenGL ES 3 | 渲染 |
 | ARKit | Face / Body |
+| Vision | Face 模式下上体姿态（iOS 14+） |
 | Assimp | FBX / GLB / 骨骼 / morph |
 | GLM | 矩阵 |
 | stb_image | 纹理 |
