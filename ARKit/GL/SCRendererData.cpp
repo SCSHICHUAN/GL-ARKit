@@ -1120,7 +1120,7 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
         appliedMorphs = true;
     }
 
-    // 当前模型没有可驱动的脸/头骨/morph（如 Wolf）：不暂停内置动画
+    // 当前模型没有可驱动的脸/头骨/morph（如 Wolf）
     if (overrides.empty() && !appliedMorphs) {
         impl_->faceDriveActive = false;
         impl_->animator->clearBoneLocalOverrides();
@@ -1128,8 +1128,7 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     }
 
     impl_->faceDriveActive = true;
-    // 有表情骨骼/morph 时才暂停内置动画，避免和覆盖互抢
-    impl_->gAnimPaused = true;
+    // 不暂停骨骼动画：身体继续播；头/眼/脸用 override 叠在动画上（见 Animator）
     impl_->animator->setBoneLocalOverrides(overrides);
 }
 
@@ -1137,7 +1136,6 @@ void SCRendererData::clearFaceDrive() {
     if (!impl_) return;
     impl_->faceDriveActive = false;
     impl_->arHeadYaw = impl_->arHeadPitch = impl_->arHeadRoll = 0.0f;
-    impl_->gAnimPaused = false;
     if (impl_->ourModel) impl_->ourModel->clearMorphWeights();
     if (impl_->animator) impl_->animator->clearBoneLocalOverrides();
 }

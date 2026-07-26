@@ -11,7 +11,7 @@
 | 功能 | 说明 |
 |------|------|
 | 多模型切换 | 顶部列表：`Wolf` / `Blackman` / `Whiteman`；切换时菊花遮罩 |
-| 骨骼动画 | Assimp 剪辑列表 + Pause；Face 驱动时暂停内置动画避免互抢 |
+| 骨骼动画 | Assimp 剪辑列表 + Pause；Face 驱动时身体动画继续，表情叠加上去 |
 | 相机 | WASD / Up / Dn；单指转模型；双指 FOV；按模型重置机位（狼更远） |
 | AR Face → 模型 | 头姿、注视、眨眼、张嘴、眉嘴颊等表情 |
 | AR Body | 关节 / 头数据摘要（不驱动当前人模） |
@@ -110,7 +110,7 @@ ARFaceAnchor
 |------|------|
 | Face / Body 不能同时开 | UI 切换 `AR:Face` / `AR:Body` |
 | AR 回调过密卡顿 | 主队列合并一帧一次；morph 权重变化阈值跳过 |
-| 动画与表情互抢 | Face 激活时暂停内置动画，骨用 override |
+| 动画与表情互抢 | 身体动画继续播；头/脸/眼皮用 override 叠在动画上；眼球仍单独替换 |
 | 头姿转整模 | 改为只转 head / neck |
 | whiteMan 头发发黑 | 无 diffuse + 黑 baseColor → 白贴图/固色 + 双面 |
 | 狼毛皮发黑环 | 有贴图时不再乘过暗 FBX 材质色；Fur cutout 固定棕色 |

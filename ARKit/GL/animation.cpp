@@ -255,26 +255,34 @@ void Animator::calculateBoneTransform(const aiNode* node, glm::mat4 parentTransf
     glm::mat4 nodeTransform = AiToGlmMat4(node->mTransformation);
 
     // 按骨名匹配 Channel；无 Channel 则用节点静态变换(绑定姿势)
-    // 有 ARKit 覆盖时：跳过动画通道
+    // ARKit 覆盖：先取动画（或绑定），再叠增量——身体动画与表情叠加
     auto ov = boneLocalOverrides.find(nodeName);
+    Bone* bone = currentAnimation->findBone(nodeName);
+    if (bone) {
+        bone->update(currentTime);
+        nodeTransform = bone->getLocalTransform();
+    }
+
     if (ov != boneLocalOverrides.end()) {
-        // 眼球：覆盖是完整局部矩阵（绕眼窝转），直接替换
-        // 头/脸：覆盖是增量，叠在绑定姿势后
         std::string bn = nodeName;
         for (char& c : bn) c = (char)tolower((unsigned char)c);
+        // 眼球：覆盖是完整局部（绕眼窝），直接替换，不叠动画通道
         const bool eyeReplace =
             bn.find("c_eye_offset") != std::string::npos ||
-            bn.find("c_eye_ref_track") != std::string::npos;
+            bn.find("c_eye_ref_track") != std::string::npos ||
+            bn.find("lefteye") != std::string::npos ||
+            bn.find("righteye") != std::string::npos;
         if (eyeReplace) {
-            nodeTransform = ov->second;
+            // whiteMan：覆盖只有旋转，需乘在绑定位移上，不能裸替换丢 T
+            if (bn.find("lefteye") != std::string::npos || bn.find("righteye") != std::string::npos) {
+                glm::mat4 bind = AiToGlmMat4(node->mTransformation);
+                nodeTransform = bind * ov->second;
+            } else {
+                nodeTransform = ov->second; // blackMan ref_track：已含 T*gaze*RS
+            }
         } else {
+            // 头/颌/眼皮等：动画局部 × ARKit 增量
             nodeTransform = nodeTransform * ov->second;
-        }
-    } else {
-        Bone* bone = currentAnimation->findBone(nodeName);
-        if (bone) {
-            bone->update(currentTime);
-            nodeTransform = bone->getLocalTransform();
         }
     }
 
