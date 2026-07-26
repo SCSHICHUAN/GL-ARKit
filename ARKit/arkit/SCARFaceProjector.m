@@ -1,5 +1,7 @@
 /*
   SCARFaceProjector.m
+  ARFaceAnchor → 头姿 / 注视角 / blendShape 权重（规范名）。
+  骨与 morph 绑定在 SCRendererData::applyFaceDrive（见 README）。
 */
 
 #import "SCARFaceProjector.h"

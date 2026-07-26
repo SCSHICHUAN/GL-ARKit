@@ -1,6 +1,7 @@
 /*
   SCARUpperBodyProjector.h
-  前置画面 → Vision → 上体左右倾斜（仅 lean，±40°）
+  Face 模式前置画面 → Vision 人体姿态 → 躯干左右倾（仅 lean，±40°）。
+  仅 whiteMan 使用；blackMan 在 VC 侧跳过投递。勿跨帧保存 ARFrame 缓冲。
 */
 
 #import <Foundation/Foundation.h>

@@ -1,6 +1,6 @@
 //
 //  SCRendererData.h
-//  ARKit — C++ scene previously driven by GLFW main loop
+//  C++ 场景与 Face / lean 驱动入口（applyFaceDrive / applyUpperBodyLean）。
 //
 
 #ifndef SCRendererData_h

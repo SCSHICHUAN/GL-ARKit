@@ -8,11 +8,47 @@
 #import "SCARKitSession.h"
 #import "SCARFaceProjector.h"
 #import "SCARUpperBodyProjector.h"
+#import "SCARPixelBufferCopy.h"
 #import <QuartzCore/QuartzCore.h>
+#import <CoreImage/CoreImage.h>
 #import <math.h>
 
 static NSString * const kAnimCellId = @"AnimClipCell";
 static NSString * const kModelCellId = @"ModelCell";
+
+/// 与预览左右镜像对齐：Left↔Right 权重对调
+static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NSString *, NSNumber *> *src) {
+    if (!src.count) return src;
+    NSMutableDictionary *dst = [NSMutableDictionary dictionaryWithCapacity:src.count];
+    NSMutableSet<NSString *> *done = [NSMutableSet set];
+    for (NSString *k in src) {
+        if ([done containsObject:k]) continue;
+        NSString *other = nil;
+        if ([k hasSuffix:@"Left"]) {
+            other = [[k substringToIndex:k.length - 4] stringByAppendingString:@"Right"];
+        } else if ([k hasSuffix:@"Right"]) {
+            other = [[k substringToIndex:k.length - 5] stringByAppendingString:@"Left"];
+        }
+        if (other) {
+            NSNumber *a = src[k];
+            NSNumber *b = src[other];
+            if (b) {
+                dst[k] = b;
+                dst[other] = a ?: @0;
+                [done addObject:k];
+                [done addObject:other];
+                continue;
+            }
+            // 只有一侧有值 → 挪到对侧
+            dst[other] = a;
+            [done addObject:k];
+            continue;
+        }
+        dst[k] = src[k];
+        [done addObject:k];
+    }
+    return dst;
+}
 
 @interface AnimClipCell : UICollectionViewCell
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -53,8 +89,23 @@ static NSString * const kModelCellId = @"ModelCell";
 @property (nonatomic, strong) UICollectionView *modelCollection;
 @property (nonatomic, strong) UIButton *pauseButton;
 @property (nonatomic, strong) UIButton *arModeButton;
+@property (nonatomic, strong) UIButton *camPreviewButton;
 @property (nonatomic, strong) UILabel *arDumpLabel;
 @property (nonatomic, strong) UIStackView *movePad;
+@property (nonatomic, strong) UIImageView *camPreviewView;
+@property (nonatomic, strong) CIContext *camPreviewCIContext;
+@property (nonatomic, strong) dispatch_queue_t camPreviewQueue;
+@property (nonatomic, assign) BOOL camPreviewEnabled;
+@property (nonatomic, assign) BOOL camPreviewConvertBusy;
+/// AR 回调只存最新帧；后台缩小+CI，主线程只设 UIImage（避免和 GL 抢主线程）
+@property (nonatomic, assign) CVPixelBufferRef camPreviewPendingBuffer;
+@property (nonatomic, assign) CGImagePropertyOrientation camPreviewPendingOrientation;
+@property (nonatomic, assign) BOOL camPreviewPendingDirty;
+@property (nonatomic, assign) CFTimeInterval lastCamPreviewGrabTime;
+@property (nonatomic, strong) NSLayoutConstraint *movePadLeadingToSafe;
+@property (nonatomic, strong) NSLayoutConstraint *movePadLeadingToPreview;
+@property (nonatomic, strong) NSLayoutConstraint *camPreviewWidth;
+@property (nonatomic, strong) NSLayoutConstraint *camPreviewHeight;
 @property (nonatomic, copy) NSArray<NSString *> *animNames;
 @property (nonatomic, copy) NSArray<NSString *> *modelNames;
 @property (nonatomic, assign) NSInteger selectedModelIndex;
@@ -73,8 +124,8 @@ static NSString * const kModelCellId = @"ModelCell";
 @property (nonatomic, strong) UIView *loadingOverlay;
 @property (nonatomic, strong) UIActivityIndicatorView *loadingSpinner;
 @property (nonatomic, assign) BOOL modelLoading;
-/// 每显示帧投递/应用 lean（不绑在 Face 回调合并上）
-@property (nonatomic, strong) CADisplayLink *leanDisplayLink;
+/// 与屏幕刷新同拍：lean + 相机预览
+@property (nonatomic, strong) CADisplayLink *displayLink;
 @property (nonatomic, assign) NSInteger lastLeanBoneCount;
 @end
 
@@ -98,9 +149,34 @@ static NSString * const kModelCellId = @"ModelCell";
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    [self.leanDisplayLink invalidate];
-    self.leanDisplayLink = nil;
+    [self.displayLink invalidate];
+    self.displayLink = nil;
+    [self tearDownCamPreviewPipeline];
     [self.arSession stop];
+}
+
+- (void)clearCamPreviewPending {
+    if (self.camPreviewPendingBuffer) {
+        CVPixelBufferRelease(self.camPreviewPendingBuffer);
+        self.camPreviewPendingBuffer = NULL;
+    }
+    self.camPreviewPendingDirty = NO;
+}
+
+- (void)tearDownCamPreviewPipeline {
+    // 停抓帧 + 清待转缓冲；在途后台任务结束时因 enabled=NO 不会贴图
+    [self clearCamPreviewPending];
+    self.lastCamPreviewGrabTime = 0;
+    self.camPreviewView.image = nil;
+    dispatch_queue_t q = self.camPreviewQueue;
+    if (q) {
+        __weak typeof(self) weakSelf = self;
+        dispatch_async(q, ^{
+            weakSelf.camPreviewCIContext = nil;
+        });
+    } else {
+        self.camPreviewCIContext = nil;
+    }
 }
 
 #pragma mark - ARKit
@@ -111,9 +187,9 @@ static NSString * const kModelCellId = @"ModelCell";
     self.arSession.logInterval = 0.5;
     self.faceProjector = [[SCARFaceProjector alloc] init];
     self.upperBodyProjector = [[SCARUpperBodyProjector alloc] init];
-    [self.leanDisplayLink invalidate];
-    self.leanDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickUpperBodyLean:)];
-    [self.leanDisplayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    [self.displayLink invalidate];
+    self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickDisplayLink:)];
+    [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 
     BOOL faceOK = [SCARKitSession isFaceTrackingSupported];
     BOOL bodyOK = [SCARKitSession isBodyTrackingSupported];
@@ -160,15 +236,18 @@ static NSString * const kModelCellId = @"ModelCell";
         else pitch = asinf(sinp);
         yaw = atan2f(2.f * (w * y - z * x), 1.f - 2.f * (x * x + y * y));
         roll = atan2f(2.f * (w * z + x * y), 1.f - 2.f * (y * y + z * z));
+        // 与预览镜像对齐：头左右 / 侧倾取反
+        yaw = -yaw;
+        roll = -roll;
         const float lim = 0.85f;
         yaw = fmaxf(-lim, fminf(lim, yaw));
         pitch = fmaxf(-lim, fminf(lim, pitch));
         roll = fmaxf(-lim * 0.5f, fminf(lim * 0.5f, roll));
     }
 
-    // 注视已是双眼共向；不再左右对调（对调会在共向时无意义，且易搞乱眨眼）
-    float ePL = proj.eyePitchLeft, eYL = proj.eyeYawLeft;
-    float ePR = proj.eyePitchRight, eYR = proj.eyeYawRight;
+    // 眼：左右骨对调 + 水平注视取反（与镜像预览同向）
+    float ePL = proj.eyePitchRight, eYL = -proj.eyeYawRight;
+    float ePR = proj.eyePitchLeft,  eYR = -proj.eyeYawLeft;
 
     float smile = [proj.faceWeights[@"mouthSmileLeft"] floatValue] + [proj.faceWeights[@"mouthSmileRight"] floatValue];
     float brow = [proj.faceWeights[@"browInnerUp"] floatValue];
@@ -179,7 +258,7 @@ static NSString * const kModelCellId = @"ModelCell";
     NSString *ubLine = @"LEAN: no pose (双肩入镜)";
     if (ub.valid) {
         ubLine = [NSString stringWithFormat:@"LEAN=%.0f° (±40) Vision≈%.0fHz bones=%ld",
-                  ub.torsoLean * 180.f / (float)M_PI,
+                  -ub.torsoLean * 180.f / (float)M_PI,
                   self.upperBodyProjector.measuredHz, (long)self.lastLeanBoneCount];
     }
     NSString *text = [NSString stringWithFormat:
@@ -198,8 +277,8 @@ static NSString * const kModelCellId = @"ModelCell";
     self.pendingEyeYawL = eYL;
     self.pendingEyePitchR = ePR;
     self.pendingEyeYawR = eYR;
-    self.pendingEyeWeights = proj.eyeWeights;
-    self.pendingFaceWeights = proj.faceWeights;
+    self.pendingEyeWeights = SCARMirrorLRWeights(proj.eyeWeights);
+    self.pendingFaceWeights = SCARMirrorLRWeights(proj.faceWeights);
     self.pendingDumpText = text;
 
     if (self.faceDrivePending) return;
@@ -219,21 +298,133 @@ static NSString * const kModelCellId = @"ModelCell";
     });
 }
 
-/// ARFrame 回调内：缓冲仍有效；忙则跳过拷贝
+/// ARFrame 回调内：缓冲仍有效。预览只轻量抓帧，CI 放到 DisplayLink。
 - (void)arSession:(SCARKitSession *)session
 didUpdateCapturedImage:(CVPixelBufferRef)image
       orientation:(CGImagePropertyOrientation)orientation {
     (void)session;
+    // Cam:Off 时整条预览链路停：不拷帧、不转图（lean/Vision 仍走自己的路径）
+    if (self.camPreviewEnabled) {
+        CFTimeInterval now = CACurrentMediaTime();
+        // ~12Hz：小窗预览够用，少 memcpy 少卡 GL
+        if (self.lastCamPreviewGrabTime <= 0 || (now - self.lastCamPreviewGrabTime) >= (1.0 / 12.0)) {
+            CVPixelBufferRef copy = SCARClonePixelBuffer(image);
+            if (copy) {
+                if (self.camPreviewPendingBuffer) CVPixelBufferRelease(self.camPreviewPendingBuffer);
+                self.camPreviewPendingBuffer = copy;
+                self.camPreviewPendingOrientation = orientation;
+                self.camPreviewPendingDirty = YES;
+                self.lastCamPreviewGrabTime = now;
+            }
+        }
+    }
+    // blackMan 不做 lean：跳过 Vision，把算力留给头/脸
+    NSString *model = (self.selectedModelIndex >= 0 &&
+                       self.selectedModelIndex < (NSInteger)self.modelNames.count)
+        ? self.modelNames[self.selectedModelIndex] : @"";
+    if ([model.lowercaseString containsString:@"black"]) return;
     [self.upperBodyProjector submitLivePixelBuffer:image orientation:orientation];
 }
 
-/// 每显示帧只把已算好的 lean 送进渲染（不再拷贝相机帧）
-- (void)tickUpperBodyLean:(CADisplayLink *)link {
+/// DisplayLink：摘走 pending，后台缩小+镜像+CI；主线程只贴图
+- (void)flushCameraPreviewOnDisplayLink {
+    if (!self.camPreviewEnabled || !self.camPreviewPendingDirty || self.camPreviewConvertBusy) return;
+    if (!self.camPreviewView || self.camPreviewView.hidden) return;
+
+    CVPixelBufferRef buf = self.camPreviewPendingBuffer;
+    CGImagePropertyOrientation ori = self.camPreviewPendingOrientation;
+    if (!buf) {
+        self.camPreviewPendingDirty = NO;
+        return;
+    }
+    self.camPreviewPendingBuffer = NULL;
+    self.camPreviewPendingDirty = NO;
+    self.camPreviewConvertBusy = YES;
+
+    if (!self.camPreviewQueue) {
+        self.camPreviewQueue = dispatch_queue_create("sc.cam.preview", DISPATCH_QUEUE_SERIAL);
+    }
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(self.camPreviewQueue, ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        UIImage *img = nil;
+        if (self && self.camPreviewEnabled) {
+            CIContext *ctx = self.camPreviewCIContext;
+            if (!ctx) {
+                ctx = [CIContext contextWithOptions:@{ kCIContextUseSoftwareRenderer: @YES }];
+                self.camPreviewCIContext = ctx;
+            }
+            CIImage *ci = [CIImage imageWithCVPixelBuffer:buf];
+            if (ci) {
+                ci = [ci imageByApplyingOrientation:ori];
+                CGFloat w = ci.extent.size.width;
+                CGAffineTransform flip = CGAffineTransformMakeTranslation(w, 0);
+                flip = CGAffineTransformScale(flip, -1.0, 1.0);
+                ci = [ci imageByApplyingTransform:flip];
+                CGRect e = ci.extent;
+                if (!CGRectIsNull(e) && !CGRectIsEmpty(e)) {
+                    ci = [ci imageByApplyingTransform:
+                          CGAffineTransformMakeTranslation(-e.origin.x, -e.origin.y)];
+                }
+                // 小窗预览：先缩到 ~240 长边再软件渲染，比全分辨率便宜很多
+                CGRect extent = CGRectIntegral(ci.extent);
+                CGFloat longSide = MAX(extent.size.width, extent.size.height);
+                const CGFloat kMaxSide = 240.0;
+                if (longSide > kMaxSide && longSide > 1.0) {
+                    CGFloat s = kMaxSide / longSide;
+                    ci = [ci imageByApplyingTransform:CGAffineTransformMakeScale(s, s)];
+                    extent = CGRectIntegral(ci.extent);
+                }
+                if (extent.size.width >= 2 && extent.size.height >= 2) {
+                    CGImageRef cg = [ctx createCGImage:ci fromRect:extent];
+                    if (cg) {
+                        img = [UIImage imageWithCGImage:cg scale:1.0 orientation:UIImageOrientationUp];
+                        CGImageRelease(cg);
+                    }
+                }
+            }
+        }
+        CVPixelBufferRelease(buf);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+            if (!self) return;
+            self.camPreviewConvertBusy = NO;
+            if (self.camPreviewEnabled && img) {
+                self.camPreviewView.transform = CGAffineTransformIdentity;
+                self.camPreviewView.image = img;
+            }
+        });
+    });
+}
+
+- (void)toggleCamPreview {
+    self.camPreviewEnabled = !self.camPreviewEnabled;
+    [self applyCamPreviewVisible:self.camPreviewEnabled];
+}
+
+- (void)applyCamPreviewVisible:(BOOL)on {
+    self.camPreviewView.hidden = !on;
+    if (!on) {
+        // 完全关掉预览：停抓帧、清缓冲、丢 CI、清图
+        [self tearDownCamPreviewPipeline];
+    }
+    [self.camPreviewButton setTitle:(on ? @"Cam:On" : @"Cam:Off") forState:UIControlStateNormal];
+    self.camPreviewWidth.constant = on ? 108.0 : 0.0;
+    self.camPreviewHeight.constant = on ? 144.0 : 0.0;
+    self.movePadLeadingToSafe.active = !on;
+    self.movePadLeadingToPreview.active = on;
+}
+
+/// 与屏幕刷新同拍：上体 lean + 相机预览
+- (void)tickDisplayLink:(CADisplayLink *)link {
     (void)link;
+    [self flushCameraPreviewOnDisplayLink];
     if (!self.upperBodyProjector) return;
     SCARUpperBodyDrive *ub = [self.upperBodyProjector latestDrive];
     if (ub.valid) {
-        self.lastLeanBoneCount = [self.glView applyUpperBodyLean:ub.torsoLean];
+        // 与预览镜像对齐：躯干左右 lean 取反
+        self.lastLeanBoneCount = [self.glView applyUpperBodyLean:-ub.torsoLean];
     }
 }
 
@@ -333,6 +524,22 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.arModeButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.arModeButton];
 
+    self.camPreviewButton = [self makeButton:@"Cam:On" action:@selector(toggleCamPreview)];
+    self.camPreviewButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.camPreviewButton];
+
+    self.camPreviewView = [[UIImageView alloc] init];
+    self.camPreviewView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.camPreviewView.contentMode = UIViewContentModeScaleAspectFill;
+    self.camPreviewView.clipsToBounds = YES;
+    self.camPreviewView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.65];
+    self.camPreviewView.layer.cornerRadius = 8;
+    self.camPreviewView.layer.borderWidth = 1.0;
+    self.camPreviewView.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.45].CGColor;
+    self.camPreviewView.userInteractionEnabled = NO;
+    [self.view addSubview:self.camPreviewView];
+    self.camPreviewEnabled = YES;
+
     self.arDumpLabel = [[UILabel alloc] init];
     self.arDumpLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.arDumpLabel.numberOfLines = 5;
@@ -373,6 +580,11 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     [self.view bringSubviewToFront:self.movePad];
 
     UILayoutGuide *g = self.view.safeAreaLayoutGuide;
+    self.movePadLeadingToSafe = [self.movePad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12];
+    self.movePadLeadingToPreview = [self.movePad.leadingAnchor constraintEqualToAnchor:self.camPreviewView.trailingAnchor constant:10];
+    self.movePadLeadingToSafe.active = NO;
+    self.movePadLeadingToPreview.active = YES;
+
     [NSLayoutConstraint activateConstraints:@[
         [self.pauseButton.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-8],
         [self.pauseButton.topAnchor constraintEqualToAnchor:g.topAnchor constant:8],
@@ -381,6 +593,10 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.arModeButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
         [self.arModeButton.topAnchor constraintEqualToAnchor:self.pauseButton.bottomAnchor constant:6],
         [self.arModeButton.heightAnchor constraintEqualToConstant:36],
+
+        [self.camPreviewButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.camPreviewButton.topAnchor constraintEqualToAnchor:self.arModeButton.bottomAnchor constant:6],
+        [self.camPreviewButton.heightAnchor constraintEqualToConstant:36],
 
         [self.modelCollection.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
         [self.modelCollection.trailingAnchor constraintEqualToAnchor:self.pauseButton.leadingAnchor constant:-8],
@@ -392,13 +608,24 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.animCollection.topAnchor constraintEqualToAnchor:self.modelCollection.bottomAnchor constant:6],
         [self.animCollection.heightAnchor constraintEqualToConstant:36],
 
+        // 左下角相机预览（关闭时宽高归零，不占位）
+        [self.camPreviewView.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
+        [self.camPreviewView.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
+
         [self.arDumpLabel.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
         [self.arDumpLabel.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-8],
         [self.arDumpLabel.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-8],
 
-        [self.movePad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12],
         [self.movePad.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
     ]];
+    self.camPreviewWidth = [self.camPreviewView.widthAnchor constraintEqualToConstant:108];
+    self.camPreviewHeight = [self.camPreviewView.heightAnchor constraintEqualToConstant:144];
+    self.camPreviewWidth.active = YES;
+    self.camPreviewHeight.active = YES;
+
+    [self applyCamPreviewVisible:YES];
+    [self.view bringSubviewToFront:self.camPreviewView];
+    [self.view bringSubviewToFront:self.movePad];
 
     self.loadingOverlay = [[UIView alloc] init];
     self.loadingOverlay.translatesAutoresizingMaskIntoConstraints = NO;

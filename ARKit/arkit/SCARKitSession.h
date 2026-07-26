@@ -1,7 +1,7 @@
 /*
   SCARKitSession.h
-  Apple ARKit session: face (head + blend shapes) or body (skeleton).
-  Face and body use different cameras — only one mode runs at a time.
+  ARKit Face（头+blendShapes）或 Body（骨架）；前后摄不同，同时只能一种。
+  Face 模式通过 didUpdateCapturedImage 把仍有效的画面交给 Vision lean。
 */
 
 #import <Foundation/Foundation.h>

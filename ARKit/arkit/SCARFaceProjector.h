@@ -1,10 +1,10 @@
 /*
   SCARFaceProjector.h
-  把 ARKit 脸数据「投射」到角色可用的三路驱动量：
-  - 头：相对校准姿态的位置 / 四元数
-  - 眼睛：eyeBlink / eyeLook / eyeSquint / eyeWide
-  - 脸部：眉 / 颊 / 鼻 / 颌 / 嘴 / 舌
-  暂不直接改 GL 网格；输出供后续 morph / 骨骼驱动使用。
+  ARFaceAnchor → 角色驱动量（不碰 GL）：
+  - 头：相对休息姿态的位置 / 四元数（再由 VC 解 yaw/pitch/roll）
+  - 眼：blink / look / squint / wide + left/rightEyeTransform → pitch/yaw
+  - 脸：眉 / 颊 / 鼻 / 颌 / 嘴 / tongueOut
+  权重名与 Apple ARBlendShapeLocation 对齐；具体骨/morph 见 README。
 */
 
 #import <Foundation/Foundation.h>

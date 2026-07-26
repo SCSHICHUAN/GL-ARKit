@@ -1,6 +1,7 @@
 /*
   SCARPixelBufferCopy.h
-  CPU 深拷贝 CVPixelBuffer（ARKit capturedImage 不可跨帧裸存指针）。
+  CPU 深拷贝 CVPixelBuffer。
+  ARFrame.capturedImage 下一帧即失效；Vision 异步用必须先拷贝（勿 Metal CI，会与 GL 冲突）。
 */
 
 #import <CoreVideo/CoreVideo.h>

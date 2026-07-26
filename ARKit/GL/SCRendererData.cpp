@@ -1,6 +1,7 @@
 //
 //  SCRendererData.cpp
-//  ARKit — 与 main.cpp 相同逻辑；仅去掉 GLFW，路径走 bundle
+//  OpenGL 场景：模型目录、渲染、ARKit Face 驱动、Vision lean（whiteMan）。
+//  Face 映射详见仓库 README「ARKit 映射」。
 //
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -214,7 +215,6 @@ static std::vector<CatalogEntry> scanBundledModels(const std::string& resourceRo
 }
 
 struct SCRendererData::Impl {
-    // settings / camera — 与 main.cpp 一致
     Camera camera;
     float lastX = 0.0f;
     float lastY = 0.0f;
@@ -263,14 +263,10 @@ struct SCRendererData::Impl {
     bool faceDriveActive = false;
     bool upperBodyDriveActive = false;
     int lastUpperBodyBoneCount = 0;
-    /// Vision 目标；显示侧 SmoothDamp + 短时速度外推，消阶梯
+    /// Vision lean 目标；显示侧 SmoothDamp（仅 whiteMan）
     float leanTarget = 0.0f;
     float leanDisplay = 0.0f;
     float leanVel = 0.0f;
-    float leanSampleVel = 0.0f;
-    float leanPrevTarget = 0.0f;
-    float leanSampleAge = 0.0f;
-    bool leanHasPrevTarget = false;
     float leanPublished = 1e9f;
     bool leanBoneCacheValid = false;
     struct SpineLeanBone { std::string name; int tier; }; // 1/2/3
@@ -278,6 +274,13 @@ struct SCRendererData::Impl {
     float arHeadYaw = 0.0f;
     float arHeadPitch = 0.0f;
     float arHeadRoll = 0.0f;
+    /// 头姿：目标来自 AR；显示侧 SmoothDamp（blackMan 父子双写头骨时尤易「头卡」）
+    float headYawT = 0.0f, headPitchT = 0.0f, headRollT = 0.0f;
+    float headYawD = 0.0f, headPitchD = 0.0f, headRollD = 0.0f;
+    float headYawV = 0.0f, headPitchV = 0.0f, headRollV = 0.0f;
+    std::string cachedHeadBone;
+    std::string cachedNeckBone;
+    bool headBoneCacheValid = false;
     /// Face / 上体各自维护，publish 时合并进 Animator（头脸不与躯干抢骨）
     std::map<std::string, glm::mat4> faceBoneOverrides;
     std::map<std::string, glm::mat4> upperBodyBoneOverrides;
@@ -359,17 +362,82 @@ struct SCRendererData::Impl {
         publishBoneOverrides();
     }
 
+    void ensureHeadBoneCache() {
+        if (headBoneCacheValid || !ourModel) return;
+        cachedHeadBone.clear();
+        cachedNeckBone.clear();
+        std::string headDef, headCtrl, headAny;
+        std::string neckDef, neckCtrl, neckAny;
+        for (const auto& kv : ourModel->getBoneInfoMap()) {
+            const std::string bn = toLowerCopy(kv.first);
+            if (bn.find("wolf3d") != std::string::npos) continue;
+            if (bn.find("_end") != std::string::npos) continue;
+            if (bn.find("head") != std::string::npos && bn.find("neck") == std::string::npos) {
+                if (bn.find("head_ref") != std::string::npos || bn.find("head_scale") != std::string::npos)
+                    continue;
+                if (bn.find("c_head.x") != std::string::npos) headCtrl = kv.first;
+                else if (bn.find("head.x") != std::string::npos) headDef = kv.first;
+                else if (bn.find("ref") == std::string::npos && bn.find("scale") == std::string::npos) {
+                    if (headAny.empty()) headAny = kv.first;
+                }
+            }
+            if (bn.find("neck") != std::string::npos) {
+                if (bn.find("neck_ref") != std::string::npos || bn.find("neck_twist") != std::string::npos)
+                    continue;
+                if (bn.find("c_p_neck") != std::string::npos) continue;
+                if (bn.find("c_neck.x") != std::string::npos) neckCtrl = kv.first;
+                else if (bn.find("neck.x") != std::string::npos) neckDef = kv.first;
+                else if (bn.rfind("neck_", 0) == 0 || bn.find("neck") != std::string::npos) {
+                    if (neckAny.empty()) neckAny = kv.first;
+                }
+            }
+        }
+        // ARP：只打一根变形骨，避免 c_head + head 父子同增量叠两层 → 头一卡一卡
+        cachedHeadBone = !headDef.empty() ? headDef : (!headCtrl.empty() ? headCtrl : headAny);
+        cachedNeckBone = !neckDef.empty() ? neckDef : (!neckCtrl.empty() ? neckCtrl : neckAny);
+        headBoneCacheValid = true;
+        printf("[FaceDrive] headBone=%s neckBone=%s\n",
+               cachedHeadBone.empty() ? "(none)" : cachedHeadBone.c_str(),
+               cachedNeckBone.empty() ? "(none)" : cachedNeckBone.c_str());
+    }
+
+    static float smoothDamp1(float current, float target, float& vel, float smoothTime, float dt) {
+        smoothTime = fmaxf(smoothTime, 1e-4f);
+        float omega = 2.0f / smoothTime;
+        float x = omega * fmaxf(dt, 0.0f);
+        float exp = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        float change = current - target;
+        float temp = (vel + omega * change) * fmaxf(dt, 0.0f);
+        vel = (vel - omega * temp) * exp;
+        return target + (change + temp) * exp;
+    }
+
+    void writeHeadOverrides(std::map<std::string, glm::mat4>& out, float yaw, float pitch, float roll) {
+        ensureHeadBoneCache();
+        glm::mat4 headM(1.0f);
+        headM = glm::rotate(headM, pitch, glm::vec3(1, 0, 0));
+        headM = glm::rotate(headM, yaw, glm::vec3(0, 1, 0));
+        headM = glm::rotate(headM, roll, glm::vec3(0, 0, 1));
+        glm::mat4 neckM(1.0f);
+        neckM = glm::rotate(neckM, pitch * 0.28f, glm::vec3(1, 0, 0));
+        neckM = glm::rotate(neckM, yaw * 0.28f, glm::vec3(0, 1, 0));
+        neckM = glm::rotate(neckM, roll * 0.20f, glm::vec3(0, 0, 1));
+        if (!cachedHeadBone.empty()) out[cachedHeadBone] = headM;
+        if (!cachedNeckBone.empty()) out[cachedNeckBone] = neckM;
+    }
+
     void clearDriveOverrides() {
         faceDriveActive = false;
         upperBodyDriveActive = false;
         leanTarget = leanDisplay = 0.0f;
-        leanVel = leanSampleVel = 0.0f;
-        leanSampleAge = 0.0f;
-        leanHasPrevTarget = false;
+        leanVel = 0.0f;
         leanPublished = 1e9f;
         faceBoneOverrides.clear();
         upperBodyBoneOverrides.clear();
         arHeadYaw = arHeadPitch = arHeadRoll = 0.0f;
+        headYawT = headPitchT = headRollT = 0.0f;
+        headYawD = headPitchD = headRollD = 0.0f;
+        headYawV = headPitchV = headRollV = 0.0f;
         if (ourModel) ourModel->clearMorphWeights();
         if (animator) animator->clearBoneLocalOverrides();
     }
@@ -404,12 +472,16 @@ struct SCRendererData::Impl {
         faceDriveActive = false;
         upperBodyDriveActive = false;
         leanTarget = leanDisplay = 0.0f;
-        leanVel = leanSampleVel = 0.0f;
-        leanSampleAge = 0.0f;
-        leanHasPrevTarget = false;
+        leanVel = 0.0f;
         leanPublished = 1e9f;
         leanBoneCacheValid = false;
         leanSpineBones.clear();
+        headBoneCacheValid = false;
+        cachedHeadBone.clear();
+        cachedNeckBone.clear();
+        headYawT = headPitchT = headRollT = 0.0f;
+        headYawD = headPitchD = headRollD = 0.0f;
+        headYawV = headPitchV = headRollV = 0.0f;
         faceBoneOverrides.clear();
         upperBodyBoneOverrides.clear();
         cachedNodeBind.clear();
@@ -529,9 +601,7 @@ struct SCRendererData::Impl {
         faceDriveActive = false;
         upperBodyDriveActive = false;
         leanTarget = leanDisplay = 0.0f;
-        leanVel = leanSampleVel = 0.0f;
-        leanSampleAge = 0.0f;
-        leanHasPrevTarget = false;
+        leanVel = 0.0f;
         leanPublished = 1e9f;
         faceBoneOverrides.clear();
         upperBodyBoneOverrides.clear();
@@ -580,7 +650,6 @@ bool SCRendererData::init(const std::string& resourceRoot, int width, int height
 
     impl_->createVBOVAO();
 
-    // 仅路径改为 bundle；其余与 main.cpp 一致
     std::string lampVs = resourceRoot + "/shaders/lamp-vs.vs";
     std::string lampFs = resourceRoot + "/shaders/lamp-fs.fs";
     std::string colorVs = resourceRoot + "/shaders/colors-vs.vs";
@@ -627,6 +696,22 @@ void SCRendererData::update(float dt) {
     if (impl_->moveRight)    impl_->camera.ProcessKeyboard(RIGHT, dt);
     if (impl_->moveUp)       impl_->camera.ProcessKeyboard(UPWARD, dt);
     if (impl_->moveDown)     impl_->camera.ProcessKeyboard(DOWN, dt);
+
+    // 头姿 SmoothDamp（blackMan 重 apply 被合并时，靠显示帧补中间值）
+    if (impl_->faceDriveActive && impl_->animator) {
+        const float st = 0.09f;
+        float ny = SCRendererData::Impl::smoothDamp1(impl_->headYawD, impl_->headYawT, impl_->headYawV, st, dt);
+        float np = SCRendererData::Impl::smoothDamp1(impl_->headPitchD, impl_->headPitchT, impl_->headPitchV, st, dt);
+        float nr = SCRendererData::Impl::smoothDamp1(impl_->headRollD, impl_->headRollT, impl_->headRollV, st, dt);
+        if (fabsf(ny - impl_->headYawD) > 1e-5f || fabsf(np - impl_->headPitchD) > 1e-5f ||
+            fabsf(nr - impl_->headRollD) > 1e-5f) {
+            impl_->headYawD = ny;
+            impl_->headPitchD = np;
+            impl_->headRollD = nr;
+            impl_->writeHeadOverrides(impl_->faceBoneOverrides, ny, np, nr);
+            impl_->publishBoneOverrides();
+        }
+    }
 
     // 上体 lean：仅 SmoothDamp 追目标（不做速度外推，避免一卡一冲）
     if (impl_->upperBodyDriveActive && impl_->animator) {
@@ -698,7 +783,6 @@ void SCRendererData::render() {
     impl_->lightCubeShader->setMat4("model", light_model);
     glDrawArrays(GL_TRIANGLES, 0, 36);
 
-    // 与 main.cpp 相同的模型绘制 / 蒙皮上传
     impl_->ourShader->use();
     impl_->ourShader->setMat4("projection", projection);
     impl_->ourShader->setMat4("view", view);
@@ -1034,6 +1118,7 @@ static void addFaceBoneOverride(std::map<std::string, glm::mat4>& out,
     }
 }
 
+/// ARKit → 角色：头(单骨) + 眼(注视/眨眼) + 颌骨 + morph(眉嘴颊舌等)。分支见 hasDetailedFaceBones()。
 void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float headRollRad,
                                     float eyePitchL, float eyeYawL, float eyePitchR, float eyeYawR,
                                     const std::map<std::string, float>& eyeWeights,
@@ -1048,55 +1133,14 @@ void SCRendererData::applyFaceDrive(float headYawRad, float headPitchRad, float 
     const auto& bones = impl_->ourModel->getBoneInfoMap();
     std::map<std::string, glm::mat4> overrides;
 
-    // —— 头：只转 head / 少量 neck，绝不转整模 ——
-    {
-        glm::mat4 headM(1.0f);
-        headM = glm::rotate(headM, headPitchRad, glm::vec3(1, 0, 0));
-        headM = glm::rotate(headM, headYawRad, glm::vec3(0, 1, 0));
-        headM = glm::rotate(headM, headRollRad, glm::vec3(0, 0, 1));
-
-        glm::mat4 neckM(1.0f);
-        neckM = glm::rotate(neckM, headPitchRad * 0.28f, glm::vec3(1, 0, 0));
-        neckM = glm::rotate(neckM, headYawRad * 0.28f, glm::vec3(0, 1, 0));
-        neckM = glm::rotate(neckM, headRollRad * 0.20f, glm::vec3(0, 0, 1));
-
-        bool gotHead = false;
-        for (const auto& kv : bones) {
-            const std::string bn = lowerCopy(kv.first);
-            if (bn.find("wolf3d") != std::string::npos) continue;
-            if (bn.find("head_ref") != std::string::npos) continue;
-            if (bn.find("head_scale") != std::string::npos) continue;
-            // 优先变形头骨 head.x / c_head.x
-            if (bn.find("c_head.x") != std::string::npos || bn.find("head.x") != std::string::npos) {
-                overrides[kv.first] = headM;
-                gotHead = true;
-            }
-        }
-        if (!gotHead) {
-            for (const auto& kv : bones) {
-                const std::string bn = lowerCopy(kv.first);
-                if (bn.find("head") == std::string::npos) continue;
-                if (bn.find("wolf3d") != std::string::npos) continue;
-                if (bn.find("ref") != std::string::npos || bn.find("scale") != std::string::npos) continue;
-                if (bn.find("neck") != std::string::npos) continue;
-                overrides[kv.first] = headM;
-                gotHead = true;
-            }
-        }
-        for (const auto& kv : bones) {
-            const std::string bn = lowerCopy(kv.first);
-            if (bn.find("neck_ref") != std::string::npos) continue;
-            if (bn.find("neck_twist") != std::string::npos) continue;
-            if (bn.find("c_p_neck") != std::string::npos) continue; // 控制器/父空物体
-            if (bn.find("c_neck.x") != std::string::npos || bn.find("neck.x") != std::string::npos ||
-                bn.rfind("neck_", 0) == 0) { // Neck_05 等简骨
-                overrides[kv.first] = neckM;
-            }
-        }
-        if (!gotHead && !impl_->faceDriveWarnedNoHead) {
-            impl_->faceDriveWarnedNoHead = true;
-            printf("[FaceDrive] warning: no head bone found; head pose ignored (not applied to whole body)\n");
-        }
+    // 头：目标更新；override 用平滑显示值（只写一根 head / neck）
+    impl_->headYawT = headYawRad;
+    impl_->headPitchT = headPitchRad;
+    impl_->headRollT = headRollRad;
+    impl_->writeHeadOverrides(overrides, impl_->headYawD, impl_->headPitchD, impl_->headRollD);
+    if (impl_->cachedHeadBone.empty() && !impl_->faceDriveWarnedNoHead) {
+        impl_->faceDriveWarnedNoHead = true;
+        printf("[FaceDrive] warning: no head bone found; head pose ignored (not applied to whole body)\n");
     }
 
     // —— 脸部：张嘴仍用骨；笑/眉/颊等走 morph（避免几十次全骨表扫描卡顿）——
@@ -1304,9 +1348,7 @@ void SCRendererData::clearUpperBodyDrive() {
     if (!impl_) return;
     impl_->upperBodyDriveActive = false;
     impl_->leanTarget = impl_->leanDisplay = 0.0f;
-    impl_->leanVel = impl_->leanSampleVel = 0.0f;
-    impl_->leanSampleAge = 0.0f;
-    impl_->leanHasPrevTarget = false;
+    impl_->leanVel = 0.0f;
     impl_->leanPublished = 1e9f;
     impl_->lastUpperBodyBoneCount = 0;
     impl_->upperBodyBoneOverrides.clear();
