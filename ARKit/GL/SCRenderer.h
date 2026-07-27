@@ -18,6 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, readonly, nullable) EAGLContext *eaglContext;
 /// 场景中主播摄像头 YUV 长方形（默认开；进 Avatar 推流）
 @property (nonatomic, assign) BOOL hostVideoVisible;
+/// CADisplayLink 目标帧率（推流 60p 时设为 60；0 = 系统默认）
+@property (nonatomic, assign) NSInteger preferredFramesPerSecond;
 
 /// Start GLES context, scene, and display link. Call once after added to hierarchy (or from VC viewDidLoad).
 - (BOOL)startRendering;

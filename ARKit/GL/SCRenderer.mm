@@ -86,9 +86,19 @@
 
     self.lastTimestamp = 0;
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(drawFrame:)];
+    if (self.preferredFramesPerSecond > 0) {
+        self.displayLink.preferredFramesPerSecond = (int)self.preferredFramesPerSecond;
+    }
     [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     self.started = YES;
     return YES;
+}
+
+- (void)setPreferredFramesPerSecond:(NSInteger)preferredFramesPerSecond {
+    _preferredFramesPerSecond = preferredFramesPerSecond;
+    if (self.displayLink) {
+        self.displayLink.preferredFramesPerSecond = (int)MAX(preferredFramesPerSecond, 0);
+    }
 }
 
 - (void)layoutSubviews {

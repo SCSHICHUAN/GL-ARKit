@@ -18,7 +18,6 @@
 @property (nonatomic, assign) BOOL capturing;
 @property (nonatomic, assign) CGSize captureSize;
 @property (nonatomic, assign) CFTimeInterval startTime;
-@property (nonatomic, assign) CFTimeInterval lastCaptureTime;
 @property (nonatomic, assign) CVPixelBufferPoolRef pixelBufferPool;
 @property (nonatomic, assign) CVOpenGLESTextureCacheRef textureCache;
 @property (nonatomic, assign) GLuint captureFBO;
@@ -69,7 +68,6 @@
 - (void)startCapture {
     self.capturing = YES;
     self.startTime = CACurrentMediaTime();
-    self.lastCaptureTime = 0;
 }
 
 - (void)stopCapture {
@@ -188,12 +186,8 @@
     if (!self.capturing) return NO;
     if (![self.delegate respondsToSelector:@selector(didOutputSampleBuffer:)]) return NO;
 
-    NSInteger fps = self.maxFPS > 0 ? self.maxFPS : 30;
+    // 不另做软件限帧：跟 CADisplayLink 走（preferredFramesPerSecond 已由 PushStream 设成目标 FPS）
     CFTimeInterval now = CACurrentMediaTime();
-    CFTimeInterval minInterval = 1.0 / (CFTimeInterval)fps;
-    if (self.lastCaptureTime > 0 && (now - self.lastCaptureTime) < minInterval) {
-        return NO;
-    }
 
     int outW = 0, outH = 0;
     if (self.outputSize.width >= 2 && self.outputSize.height >= 2) {
@@ -309,11 +303,20 @@
     CVPixelBufferRelease(pixelBuffer);
     if (st != noErr || !sampleBuffer) return;
 
-    self.lastCaptureTime = CACurrentMediaTime();
     [self.delegate didOutputSampleBuffer:sampleBuffer];
     static int sCap = 0;
-    if ((++sCap % 30) == 1) {
-        NSLog(@"[SCRenderCapture] textureCache → #%d %dx%d", sCap, self.poolWidth, self.poolHeight);
+    static CFTimeInterval sFpsWindowStart = 0;
+    static int sFpsWindowCount = 0;
+    CFTimeInterval tNow = CACurrentMediaTime();
+    if (sFpsWindowStart <= 0) sFpsWindowStart = tNow;
+    sFpsWindowCount++;
+    if ((++sCap % 60) == 1 || (tNow - sFpsWindowStart) >= 1.0) {
+        CFTimeInterval dt = MAX(tNow - sFpsWindowStart, 0.001);
+        NSLog(@"[SCRenderCapture] → #%d %dx%d ~%.1f fps (max=%ld)",
+              sCap, self.poolWidth, self.poolHeight,
+              sFpsWindowCount / dt, (long)self.maxFPS);
+        sFpsWindowStart = tNow;
+        sFpsWindowCount = 0;
     }
     CFRelease(sampleBuffer);
 }

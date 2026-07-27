@@ -95,7 +95,7 @@ static void applyFormatLayout(CatalogEntry& e) {
         // FBX：常见游戏单位（如 Wolf）— 体型大，相机往后一点才看得全
         e.scale = 0.018f;
         e.yOffset = -0.7f;
-        e.xOffset = 0.0f;
+        e.xOffset = -0.2f;
         e.defaultYawDeg = 60.0f;
         e.cameraY = 0.0f;
         e.cameraZ = 4.8f;
@@ -103,17 +103,17 @@ static void applyFormatLayout(CatalogEntry& e) {
         // glTF：米制人模；扶正后默认正面，略下移/右移进画面中心
         e.scale = 1.0f;
         e.yOffset = -1.0f;
-        e.xOffset = 0.0f;
+        e.xOffset = 0.041f;
         e.defaultYawDeg = 0.0f;
         // whiteMan / blackMan 扶正后仍略前倾，初始化后仰一点（Wolf 等 FBX 不走这里）
         e.defaultPitchDeg = 10.0f;
         e.cameraY = 0.3f;
-        e.cameraZ = 4.0f;
+        e.cameraZ = 2.5f;
     } else {
         // obj/dae 等
         e.scale = 1.0f;
         e.yOffset = -0.5f;
-        e.xOffset = 0.0f;
+        e.xOffset = 0.5f;
         e.defaultYawDeg = 180.0f;
         e.cameraY = 0.4f;
         e.cameraZ = 3.2f;

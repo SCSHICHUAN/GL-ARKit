@@ -210,6 +210,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
             self.renderCapture.delegate = self;
             self.renderCapture.maxFPS = self.activeFPS;
             self.renderCapture.outputSize = enc;
+            self.glRenderer.preferredFramesPerSecond = self.activeFPS;
             [self.renderCapture attachToRenderer:self.glRenderer];
             [self.renderCapture startCapture];
             self.previewLayer = nil;
@@ -263,6 +264,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
         [self.renderCapture stopCapture];
         [self.renderCapture destroyGLResources];
         [self.renderCapture detachFromRenderer];
+        self.glRenderer.preferredFramesPerSecond = 0;
         [self.videoCapture stopVideoCollect];
         self.renderCapture = nil;
         self.videoCapture = nil;
@@ -292,6 +294,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
         [self.renderCapture stopCapture];
         [self.renderCapture destroyGLResources];
         [self.renderCapture detachFromRenderer];
+        self.glRenderer.preferredFramesPerSecond = 0;
         [self.videoCapture stopVideoCollect];
         [self.h264encoder stopEncoding];
         [self.audioCapture stopCapture];
@@ -321,7 +324,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 #pragma mark - Video / GL → H264
 
 - (void)didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer {
-    // Avatar：SCRenderCapture 已按 maxFPS 限帧；Cam：仅低于 30 时节流
+    // Cam：仅低于 30 时节流；Avatar 跟 DisplayLink，不再限帧
     if (self.videoSource == PushStreamVideoSourceCamera &&
         self.activeFPS > 0 && self.activeFPS < 30) {
         CFTimeInterval now = CACurrentMediaTime();
