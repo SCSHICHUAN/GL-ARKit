@@ -247,6 +247,7 @@ struct SCRendererData::Impl {
 
     int screenWidth = 1000;
     int screenHeight = 750;
+    bool renderFlipY = false;
     std::string resourceRoot;
     std::vector<CatalogEntry> catalog;
 
@@ -685,6 +686,10 @@ void SCRendererData::resize(int width, int height) {
     glViewport(0, 0, width, height);
 }
 
+void SCRendererData::setRenderFlipY(bool flipY) {
+    if (impl_) impl_->renderFlipY = flipY;
+}
+
 void SCRendererData::update(float dt) {
     if (!impl_) return;
     impl_->deltaTime = dt;
@@ -765,6 +770,13 @@ void SCRendererData::render() {
 
     float aspect = (float)impl_->screenWidth / (float)impl_->screenHeight;
     glm::mat4 projection = glm::perspective(glm::radians(impl_->camera.Zoom), aspect, 0.1f, 100.0f);
+    if (impl_->renderFlipY) {
+        // FBO/CVPixelBuffer 顶原点；翻转后正面需改绕序
+        projection = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, -1.0f, 1.0f)) * projection;
+        glFrontFace(GL_CW);
+    } else {
+        glFrontFace(GL_CCW);
+    }
     glm::mat4 view = impl_->camera.GetViewMatrix();
 
     impl_->ourShader->use();

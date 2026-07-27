@@ -1,7 +1,6 @@
 /*
   SCRenderCapture.h
-  从 SCRenderer 的 GLES 帧缓冲取像素，打成 CMSampleBuffer。
-  委托接口与 Media/VideoCapture 一致，可直接喂给 H264Encoder。
+  编码尺寸离屏 FBO + CVOpenGLESTextureCache：直接渲进 CVPixelBuffer，避免全屏 glReadPixels。
 */
 
 #import <Foundation/Foundation.h>
@@ -11,8 +10,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class SCRenderer;
+@class EAGLContext;
 
-/// 与 Media `VideoCaptureDelegate` 同签名，便于替换摄像头采集做直播
 @protocol SCRenderCaptureDelegate <NSObject>
 - (void)didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer;
 @end
@@ -20,27 +19,27 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SCRenderCapture : NSObject
 
 @property (nonatomic, weak, nullable) id<SCRenderCaptureDelegate> delegate;
-
-/// 限帧，默认 30；编码器尺寸应对齐 `captureSize`（或 `outputSize`）
 @property (nonatomic, assign) NSInteger maxFPS;
-
-/// 若非 CGSizeZero，则缩放到该尺寸再输出（应对齐 H264Encoder）；默认全屏 FBO 尺寸
+/// 编码输出尺寸（应对齐 H264Encoder）；必填有效偶数尺寸
 @property (nonatomic, assign) CGSize outputSize;
-
-/// 最近一次成功抓到的像素尺寸（偶数对齐，供 H264Encoder initWithVideSize:）
 @property (nonatomic, readonly) CGSize captureSize;
-
 @property (nonatomic, readonly, getter=isCapturing) BOOL capturing;
+@property (nonatomic, readonly) int captureWidth;
+@property (nonatomic, readonly) int captureHeight;
 
-/// 挂到渲染器：之后每帧 render 完会自动抓缓冲
 - (void)attachToRenderer:(SCRenderer *)renderer;
 - (void)detachFromRenderer;
 
 - (void)startCapture;
 - (void)stopCapture;
 
-/// 仅供 SCRenderer 在「当前 EAGLContext + FBO 已画完」时调用
-- (void)onFramebufferReadyWidth:(int)width height:(int)height;
+/// 须在当前 EAGLContext 下调用。绑定离屏 FBO；返回 NO 则本帧跳过抓帧。
+- (BOOL)beginEncodePassWithContext:(EAGLContext *)context;
+/// 渲完离屏后调用：冲刷纹理缓存 → CMSampleBuffer → delegate
+- (void)endEncodePass;
+
+/// 释放 FBO / TextureCache（须在 EAGLContext 当前时）
+- (void)destroyGLResources;
 
 @end
 

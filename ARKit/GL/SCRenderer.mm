@@ -95,6 +95,7 @@
     self.displayLink = nil;
     if (self.context) {
         [EAGLContext setCurrentContext:self.context];
+        [self.renderCapture destroyGLResources];
         [self destroyFramebuffer];
     }
     delete self.data;
@@ -102,6 +103,10 @@
     if ([EAGLContext currentContext] == self.context) {
         [EAGLContext setCurrentContext:nil];
     }
+}
+
+- (EAGLContext *)eaglContext {
+    return self.context;
 }
 
 #pragma mark - Framebuffer / render
@@ -156,12 +161,24 @@
 
     self.data->update(dt);
 
+    // ① 直播：直接渲到编码尺寸的 CVPixelBuffer（TextureCache，无全屏 readPixels）
+    SCRenderCapture *cap = self.renderCapture;
+    if (cap.isCapturing && [cap beginEncodePassWithContext:self.context]) {
+        const int cw = cap.captureWidth;
+        const int ch = cap.captureHeight;
+        self.data->resize(cw, ch);
+        self.data->setRenderFlipY(true);
+        self.data->render();
+        self.data->setRenderFlipY(false);
+        glFrontFace(GL_CCW);
+        [cap endEncodePass];
+        self.data->resize(self.backingWidth, self.backingHeight);
+    }
+
+    // ② 屏幕
     glBindFramebuffer(GL_FRAMEBUFFER, self.defaultFramebuffer);
     glViewport(0, 0, self.backingWidth, self.backingHeight);
     self.data->render();
-
-    // 直播：present 前读回（FBO 仍绑定）
-    [self.renderCapture onFramebufferReadyWidth:self.backingWidth height:self.backingHeight];
 
     glBindRenderbuffer(GL_RENDERBUFFER, self.colorRenderbuffer);
     [self.context presentRenderbuffer:GL_RENDERBUFFER];

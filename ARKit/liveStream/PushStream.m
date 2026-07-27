@@ -6,6 +6,7 @@
 #import "PushStream.h"
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <OpenGLES/EAGL.h>
 #import "VideoCapture.h"
 #import "SCRenderCapture.h"
 #import "SCRenderer.h"
@@ -257,7 +258,10 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 
 - (void)tearDownCaptureEncoders {
     dispatch_block_t ui = ^{
+        EAGLContext *ctx = self.glRenderer.eaglContext;
+        if (ctx) [EAGLContext setCurrentContext:ctx];
         [self.renderCapture stopCapture];
+        [self.renderCapture destroyGLResources];
         [self.renderCapture detachFromRenderer];
         [self.videoCapture stopVideoCollect];
         self.renderCapture = nil;
@@ -283,7 +287,10 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
     self.streaming = NO;
 
     dispatch_block_t cleanup = ^{
+        EAGLContext *ctx = self.glRenderer.eaglContext;
+        if (ctx) [EAGLContext setCurrentContext:ctx];
         [self.renderCapture stopCapture];
+        [self.renderCapture destroyGLResources];
         [self.renderCapture detachFromRenderer];
         [self.videoCapture stopVideoCollect];
         [self.h264encoder stopEncoding];

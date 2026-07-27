@@ -19,6 +19,8 @@ public:
     void resize(int width, int height);
     void update(float deltaTime);
     void render();
+    /// 渲到 CVPixelBuffer 时翻转 Y（GL 底原点 → 视频顶原点）
+    void setRenderFlipY(bool flipY);
 
     // Touch / gesture input (replaces mouse + keyboard)
     void onTouchBegan(float x, float y);
