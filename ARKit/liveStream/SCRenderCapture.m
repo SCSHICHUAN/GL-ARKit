@@ -1,7 +1,7 @@
 /*
   SCRenderCapture.m
   CVPixelBufferPool + CVOpenGLESTextureCache：
-  begin → 像素缓冲绑离屏 FBO；场景 render 写入；end → CMSampleBuffer → H264。
+  begin → 渲到 4x MSAA FBO；end → blit resolve 进 CV 纹理 → CMSampleBuffer → H264。
   无全屏 glReadPixels，避免 GPU–CPU 同步卡顿。
 */
 
@@ -22,8 +22,15 @@
 @property (nonatomic, assign) CFTimeInterval startTime;
 @property (nonatomic, assign) CVPixelBufferPoolRef pixelBufferPool;
 @property (nonatomic, assign) CVOpenGLESTextureCacheRef textureCache;
-@property (nonatomic, assign) GLuint captureFBO;
-@property (nonatomic, assign) GLuint depthRBO;
+/// 多重采样绘制目标
+@property (nonatomic, assign) GLuint msaaFBO;
+@property (nonatomic, assign) GLuint msaaColorRBO;
+@property (nonatomic, assign) GLuint msaaDepthRBO;
+@property (nonatomic, assign) int msaaSamples;
+@property (nonatomic, assign) int msaaWidth;
+@property (nonatomic, assign) int msaaHeight;
+/// resolve：颜色 = CVOpenGLESTexture（进编码）
+@property (nonatomic, assign) GLuint resolveFBO;
 @property (nonatomic, assign) int poolWidth;
 @property (nonatomic, assign) int poolHeight;
 @property (nonatomic, assign) CMFormatDescriptionRef formatDescription;
@@ -39,6 +46,7 @@
     if (self) {
         _maxFPS = 30;
         _outputSize = CGSizeZero;
+        _msaaSamples = 4;
     }
     return self;
 }
@@ -46,7 +54,6 @@
 - (void)dealloc {
     [self stopCapture];
     [self detachFromRenderer];
-    // GL 资源需在 context 下释放；若仍残留则仅释放 CPU 侧
     [self destroyCPUResources];
 }
 
@@ -91,21 +98,34 @@
     self.poolHeight = 0;
 }
 
+- (void)destroyMSAABuffers {
+    if (self.msaaFBO) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &_msaaFBO);
+        self.msaaFBO = 0;
+    }
+    if (self.msaaColorRBO) {
+        glDeleteRenderbuffers(1, &_msaaColorRBO);
+        self.msaaColorRBO = 0;
+    }
+    if (self.msaaDepthRBO) {
+        glDeleteRenderbuffers(1, &_msaaDepthRBO);
+        self.msaaDepthRBO = 0;
+    }
+    self.msaaWidth = 0;
+    self.msaaHeight = 0;
+}
+
 - (void)destroyGLResources {
-    if (self.captureFBO) {
-        glBindFramebuffer(GL_FRAMEBUFFER, self.captureFBO);
+    [self abandonPendingFrame];
+    if (self.resolveFBO) {
+        glBindFramebuffer(GL_FRAMEBUFFER, self.resolveFBO);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &_resolveFBO);
+        self.resolveFBO = 0;
     }
-    [self abandonPendingFrame];
-    if (self.captureFBO) {
-        glDeleteFramebuffers(1, &_captureFBO);
-        self.captureFBO = 0;
-    }
-    if (self.depthRBO) {
-        glDeleteRenderbuffers(1, &_depthRBO);
-        self.depthRBO = 0;
-    }
+    [self destroyMSAABuffers];
     if (self.textureCache) {
         CFRelease(self.textureCache);
         self.textureCache = NULL;
@@ -170,25 +190,59 @@
     return YES;
 }
 
-- (BOOL)ensureCaptureFBO {
-    const int w = self.poolWidth;
-    const int h = self.poolHeight;
-    if (!self.captureFBO) {
-        glGenFramebuffers(1, &_captureFBO);
+- (BOOL)ensureMSAAWidth:(int)w height:(int)h {
+    if (self.msaaFBO && self.msaaWidth == w && self.msaaHeight == h &&
+        self.msaaColorRBO && self.msaaDepthRBO) {
+        return YES;
     }
-    if (!self.depthRBO) {
-        glGenRenderbuffers(1, &_depthRBO);
+    [self destroyMSAABuffers];
+
+    GLint maxSamples = 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    int samples = 4;
+    if (maxSamples > 0 && samples > maxSamples) samples = (int)maxSamples;
+    if (samples < 1) samples = 1;
+    self.msaaSamples = samples;
+
+    glGenFramebuffers(1, &_msaaFBO);
+    glGenRenderbuffers(1, &_msaaColorRBO);
+    glGenRenderbuffers(1, &_msaaDepthRBO);
+
+    glBindRenderbuffer(GL_RENDERBUFFER, self.msaaColorRBO);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
+
+    glBindRenderbuffer(GL_RENDERBUFFER, self.msaaDepthRBO);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT24, w, h);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, self.msaaFBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, self.msaaColorRBO);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.msaaDepthRBO);
+
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        NSLog(@"[SCRenderCapture] MSAA FBO incomplete: 0x%x samples=%d", status, samples);
+        [self destroyMSAABuffers];
+        return NO;
     }
-    glBindRenderbuffer(GL_RENDERBUFFER, self.depthRBO);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
-    return self.captureFBO != 0 && self.depthRBO != 0;
+
+    self.msaaWidth = w;
+    self.msaaHeight = h;
+    NSLog(@"[SCRenderCapture] MSAA %dx%d x%d", w, h, samples);
+    return YES;
+}
+
+- (BOOL)ensureResolveFBO {
+    if (!self.resolveFBO) {
+        glGenFramebuffers(1, &_resolveFBO);
+    }
+    return self.resolveFBO != 0;
 }
 
 - (BOOL)beginEncodePassWithContext:(EAGLContext *)context {
     if (!self.capturing) return NO;
     if (![self.delegate respondsToSelector:@selector(didOutputSampleBuffer:)]) return NO;
 
-    // 不软件限帧：跟 CADisplayLink（PushStream 已设 preferredFramesPerSecond）
     CFTimeInterval now = CACurrentMediaTime();
 
     int outW = 0, outH = 0;
@@ -200,7 +254,8 @@
 
     if (![self ensurePoolWidth:outW height:outH]) return NO;
     if (![self ensureTextureCache:context]) return NO;
-    if (![self ensureCaptureFBO]) return NO;
+    if (![self ensureMSAAWidth:outW height:outH]) return NO;
+    if (![self ensureResolveFBO]) return NO;
 
     [self abandonPendingFrame];
 
@@ -235,13 +290,15 @@
     glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, self.captureFBO);
+    // resolve 目标：CV 纹理（本帧只 blit，不直接画）
+    glBindFramebuffer(GL_FRAMEBUFFER, self.resolveFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, texName, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depthRBO);
 
+    // 绘制到 MSAA
+    glBindFramebuffer(GL_FRAMEBUFFER, self.msaaFBO);
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
-        NSLog(@"[SCRenderCapture] incomplete FBO: 0x%x", status);
+        NSLog(@"[SCRenderCapture] MSAA bind incomplete: 0x%x", status);
         CFRelease(texture);
         CVPixelBufferRelease(pixelBuffer);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -262,6 +319,15 @@
         return;
     }
 
+    const int w = self.poolWidth;
+    const int h = self.poolHeight;
+
+    // MSAA → 单采样 CV 纹理（ES3：multisample blit 须 NEAREST）
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, self.msaaFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.resolveFBO);
+    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, self.resolveFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glFlush();
@@ -309,8 +375,8 @@
 #ifdef DEBUG
     static int sCap = 0;
     if ((++sCap % 120) == 1) {
-        NSLog(@"[SCRenderCapture] → #%d %dx%d (maxFPS=%ld)",
-              sCap, self.poolWidth, self.poolHeight, (long)self.maxFPS);
+        NSLog(@"[SCRenderCapture] → #%d %dx%d MSAAx%d (maxFPS=%ld)",
+              sCap, self.poolWidth, self.poolHeight, self.msaaSamples, (long)self.maxFPS);
     }
 #endif
     CFRelease(sampleBuffer);

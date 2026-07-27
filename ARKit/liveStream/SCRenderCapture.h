@@ -1,7 +1,7 @@
 /*
   SCRenderCapture.h
-  Avatar 推流抓帧：编码尺寸离屏 FBO + CVOpenGLESTextureCache，
-  场景直接渲进 CVPixelBuffer（零拷贝进 VideoToolbox），避免全屏 glReadPixels 卡顿。
+  Avatar 推流抓帧：编码尺寸 4x MSAA 离屏 → blit resolve 到 CVPixelBuffer
+（TextureCache 零拷贝进 VideoToolbox），避免全屏 glReadPixels。
 */
 
 #import <Foundation/Foundation.h>
