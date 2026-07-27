@@ -56,7 +56,13 @@ public:
     std::string modelNameAt(int index) const;
     int currentModelIndex() const;
     /// Swap the drawn Assimp model; returns false if path missing / load failed.
+    /// 须在当前 EAGLContext 下调用（可用 sharegroup 后台线程 Assimp+上传纹理）。
     bool loadModelAtIndex(int index);
+    /// 目录中第一个可加载模型（启动时异步调用）
+    bool loadFirstAvailableModel();
+    bool hasModel() const;
+    /// 主 context 上重建 VAO（后台线程 load 之后必须调）
+    void rebindCurrentModelGPU();
 
     /// ARKit 投射结果：头姿 + 眼/脸权重 → 模型（头旋转 + 表情骨骼覆盖）。
     /// eyePitch/Yaw：左右眼注视角（弧度，头/脸空间）。

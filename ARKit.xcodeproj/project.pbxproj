@@ -48,6 +48,7 @@
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
 		CD1B44AF45C3435CAF1A7E99 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = F71CCB474A3146C1BA298D3A /* libc++.tbd */; };
 		DCE31A7089E64EF68ABC1F34 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B14B9C7B567A481A9C233D54 /* Assets.xcassets */; };
+		A1LAUNCH00000000000002 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A1LAUNCH00000000000001 /* LaunchScreen.storyboard */; };
 		E26DD32CE6064190AA68F0FD /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C5FD4B2EF4524AA98C1F2E75 /* Foundation.framework */; };
 		E61EDD15EE5C40248FA1073F /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D66CB5A86F814322B67F7598 /* UIKit.framework */; };
 		E649036B476D4116A5B7D3CB /* GameViewController.mm in Sources */ = {isa = PBXBuildFile; fileRef = 1059502749CE47029A362E0B /* GameViewController.mm */; };
@@ -492,6 +493,7 @@
 		AEA4A7481E8443C0B6F2806F /* matrix_float3x3.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = matrix_float3x3.hpp; sourceTree = "<group>"; };
 		AFEC1CF9B9CC43D1B426D17D /* type_mat3x3.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_mat3x3.hpp; sourceTree = "<group>"; };
 		B14B9C7B567A481A9C233D54 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1LAUNCH00000000000001 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		B17D41794E0C473B9AE0983B /* GameViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GameViewController.h; sourceTree = "<group>"; };
 		B19D2A9693DA41D5BBA634F8 /* quaternion.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = quaternion.inl; sourceTree = "<group>"; };
 		B1E435FA4CD44056A1DC35E8 /* SCRenderer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCRenderer.h; sourceTree = "<group>"; };
@@ -777,6 +779,7 @@
 			isa = PBXGroup;
 			children = (
 				B14B9C7B567A481A9C233D54 /* Assets.xcassets */,
+				A1LAUNCH00000000000001 /* LaunchScreen.storyboard */,
 				ABB4419E7FF640C7A7F76DA3 /* main.m */,
 				AD7F494E6E2D4D3B857DB5FC /* AppDelegate.h */,
 				6DC33C57086843E4847844A7 /* AppDelegate.m */,
@@ -1607,6 +1610,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DCE31A7089E64EF68ABC1F34 /* Assets.xcassets in Resources */,
+				A1LAUNCH00000000000002 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

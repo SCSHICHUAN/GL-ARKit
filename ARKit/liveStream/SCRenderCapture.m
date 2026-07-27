@@ -1,6 +1,8 @@
 /*
   SCRenderCapture.m
-  CVOpenGLESTextureCache：场景直接渲到 CVPixelBuffer，再送 H264（无全屏 glReadPixels）。
+  CVPixelBufferPool + CVOpenGLESTextureCache：
+  begin → 像素缓冲绑离屏 FBO；场景 render 写入；end → CMSampleBuffer → H264。
+  无全屏 glReadPixels，避免 GPU–CPU 同步卡顿。
 */
 
 #import "SCRenderCapture.h"
@@ -186,7 +188,7 @@
     if (!self.capturing) return NO;
     if (![self.delegate respondsToSelector:@selector(didOutputSampleBuffer:)]) return NO;
 
-    // 不另做软件限帧：跟 CADisplayLink 走（preferredFramesPerSecond 已由 PushStream 设成目标 FPS）
+    // 不软件限帧：跟 CADisplayLink（PushStream 已设 preferredFramesPerSecond）
     CFTimeInterval now = CACurrentMediaTime();
 
     int outW = 0, outH = 0;
@@ -304,20 +306,13 @@
     if (st != noErr || !sampleBuffer) return;
 
     [self.delegate didOutputSampleBuffer:sampleBuffer];
+#ifdef DEBUG
     static int sCap = 0;
-    static CFTimeInterval sFpsWindowStart = 0;
-    static int sFpsWindowCount = 0;
-    CFTimeInterval tNow = CACurrentMediaTime();
-    if (sFpsWindowStart <= 0) sFpsWindowStart = tNow;
-    sFpsWindowCount++;
-    if ((++sCap % 60) == 1 || (tNow - sFpsWindowStart) >= 1.0) {
-        CFTimeInterval dt = MAX(tNow - sFpsWindowStart, 0.001);
-        NSLog(@"[SCRenderCapture] → #%d %dx%d ~%.1f fps (max=%ld)",
-              sCap, self.poolWidth, self.poolHeight,
-              sFpsWindowCount / dt, (long)self.maxFPS);
-        sFpsWindowStart = tNow;
-        sFpsWindowCount = 0;
+    if ((++sCap % 120) == 1) {
+        NSLog(@"[SCRenderCapture] → #%d %dx%d (maxFPS=%ld)",
+              sCap, self.poolWidth, self.poolHeight, (long)self.maxFPS);
     }
+#endif
     CFRelease(sampleBuffer);
 }
 

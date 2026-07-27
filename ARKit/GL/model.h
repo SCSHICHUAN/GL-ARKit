@@ -91,6 +91,11 @@ public:
     int getAnimationCount() const { return (int)animations.size(); }
     int getMeshCount() const { return meshes.size(); }
 
+    /// 后台 sharegroup 加载后，在主 EAGLContext 上重建各 mesh 的 VAO
+    void rebindGPUOnCurrentContext() {
+        for (Mesh& m : meshes) m.rebindVAOOnCurrentContext();
+    }
+
     bool hasMorphTargets() const {
         for (const auto& m : meshes) if (m.hasMorphTargets()) return true;
         return false;

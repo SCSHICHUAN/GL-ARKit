@@ -767,24 +767,32 @@ bool SCRendererData::init(const std::string& resourceRoot, int width, int height
         impl_->yuvQuadShader = new Shader(yuvVs.c_str(), yuvFs.c_str());
     }
 
-    bool loaded = false;
-    for (int i = 0; i < (int)impl_->catalog.size(); ++i) {
-        if (loadModelAtIndex(i)) {
-            loaded = true;
-            break;
-        }
-        printf("[Model] skip unloadable #%d %s\n", i, impl_->catalog[(size_t)i].name.c_str());
-    }
-    if (!loaded) {
-        printf("SCRendererData: no model could be loaded\n");
-        return false;
-    }
-
+    // 默认模型改为异步加载（见 loadFirstAvailableModel），避免启动堵在主线程
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glViewport(0, 0, width, height);
     return true;
+}
+
+bool SCRendererData::loadFirstAvailableModel() {
+    if (!impl_) return false;
+    for (int i = 0; i < (int)impl_->catalog.size(); ++i) {
+        if (loadModelAtIndex(i)) return true;
+        printf("[Model] skip unloadable #%d %s\n", i, impl_->catalog[(size_t)i].name.c_str());
+    }
+    printf("SCRendererData: no model could be loaded\n");
+    return false;
+}
+
+bool SCRendererData::hasModel() const {
+    return impl_ && impl_->ourModel != nullptr;
+}
+
+void SCRendererData::rebindCurrentModelGPU() {
+    if (impl_ && impl_->ourModel) {
+        impl_->ourModel->rebindGPUOnCurrentContext();
+    }
 }
 
 void SCRendererData::resize(int width, int height) {
@@ -799,7 +807,7 @@ void SCRendererData::setRenderFlipY(bool flipY) {
 }
 
 void SCRendererData::update(float dt) {
-    if (!impl_) return;
+    if (!impl_ || !impl_->ourModel) return;
     impl_->deltaTime = dt;
     impl_->elapsedTime += dt;
 

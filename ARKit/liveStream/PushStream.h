@@ -1,6 +1,7 @@
 /*
   PushStream.h
-  Media/ViewController → PushStream；视频源可选摄像头或 GL 虚拟主播。
+  推流门面：Src=Avatar(GL) 或 Cam；经 H264/AAC → RTMP。
+  Avatar 默认；开播时挂 SCRenderCapture 到 SCRenderer，帧率跟 DisplayLink。
 */
 
 #import <Foundation/Foundation.h>

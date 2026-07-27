@@ -29,6 +29,7 @@
 @property (nonatomic, assign) int backingHeight;
 @property (nonatomic, assign) CFTimeInterval lastTimestamp;
 @property (nonatomic, assign) BOOL started;
+@property (nonatomic, assign) BOOL modelLoadBusy;
 @property (nonatomic, strong) SCHostVideoPlane *hostVideoPlane;
 @property (nonatomic, assign) CVPixelBufferRef pendingHostVideoBuffer;
 @property (nonatomic, assign) CGImagePropertyOrientation pendingHostVideoOrientation;
@@ -177,7 +178,7 @@
 }
 
 - (void)drawFrame:(CADisplayLink *)link {
-    if (!self.data || !self.context) return;
+    if (!self.data || !self.context || self.modelLoadBusy) return;
     [EAGLContext setCurrentContext:self.context];
 
     float dt = 1.0f / 60.0f;
@@ -190,7 +191,8 @@
     self.data->update(dt);
     [self flushHostVideoToGL];
 
-    // ① 直播：编码 FBO 顶原点 → 场景 FlipY；小窗在 drawHostVideoQuad 里同步镜像位置
+    // ① Avatar 推流离屏：渲到「编码分辨率」FBO（颜色附件=CVPixelBuffer 共享纹理）
+    //    FlipY：编码缓冲顶原点，与屏幕底原点相反；结束后恢复 viewport 给上屏
     SCRenderCapture *cap = self.renderCapture;
     if (cap.isCapturing && [cap beginEncodePassWithContext:self.context]) {
         const int cw = cap.captureWidth;
@@ -204,7 +206,7 @@
         self.data->resize(self.backingWidth, self.backingHeight);
     }
 
-    // ② 屏幕
+    // ② 本机预览：再渲一趟到 default FBO + present
     glBindFramebuffer(GL_FRAMEBUFFER, self.defaultFramebuffer);
     glViewport(0, 0, self.backingWidth, self.backingHeight);
     self.data->render();
@@ -409,8 +411,62 @@
 }
 
 - (BOOL)loadModelAtIndex:(NSInteger)index {
-    if (!self.data) return NO;
+    if (!self.data || !self.context) return NO;
+    [EAGLContext setCurrentContext:self.context];
     return self.data->loadModelAtIndex((int)index) ? YES : NO;
+}
+
+/// Assimp / 贴图上传很重：放到与主 context 共享的 sharegroup 后台线程，避免卡死 UI。
+- (void)loadModelAtIndex:(NSInteger)index
+              completion:(void (^)(BOOL success))completion {
+    [self runModelLoadOnBackground:^BOOL{
+        if (!self.data) return NO;
+        return self.data->loadModelAtIndex((int)index);
+    } completion:completion];
+}
+
+- (void)loadDefaultModelWithCompletion:(void (^)(BOOL success))completion {
+    [self runModelLoadOnBackground:^BOOL{
+        if (!self.data) return NO;
+        return self.data->loadFirstAvailableModel();
+    } completion:completion];
+}
+
+- (void)runModelLoadOnBackground:(BOOL (^)(void))work
+                      completion:(void (^)(BOOL success))completion {
+    if (!self.context || !self.data || !work) {
+        if (completion) completion(NO);
+        return;
+    }
+
+    self.displayLink.paused = YES;
+    self.modelLoadBusy = YES;
+    EAGLContext *shareCtx =
+        [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3
+                               sharegroup:self.context.sharegroup];
+    if (!shareCtx) {
+        self.modelLoadBusy = NO;
+        self.displayLink.paused = NO;
+        if (completion) completion(NO);
+        return;
+    }
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [EAGLContext setCurrentContext:shareCtx];
+        BOOL ok = work();
+        glFinish();
+        [EAGLContext setCurrentContext:nil];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [EAGLContext setCurrentContext:self.context];
+            if (ok && self.data) {
+                self.data->rebindCurrentModelGPU();
+            }
+            self.modelLoadBusy = NO;
+            self.displayLink.paused = NO;
+            if (completion) completion(ok);
+        });
+    });
 }
 
 static std::map<std::string, float> SCMapFromWeightDict(NSDictionary<NSString *, NSNumber *> *dict) {
@@ -433,7 +489,7 @@ static std::map<std::string, float> SCMapFromWeightDict(NSDictionary<NSString *,
                         eyeYawRight:(float)eyeYawR
                         eyeWeights:(NSDictionary<NSString *, NSNumber *> *)eyeWeights
                        faceWeights:(NSDictionary<NSString *, NSNumber *> *)faceWeights {
-    if (!self.data) return;
+    if (!self.data || self.modelLoadBusy) return;
     self.data->applyFaceDrive(yaw, pitch, roll,
                               eyePitchL, eyeYawL, eyePitchR, eyeYawR,
                               SCMapFromWeightDict(eyeWeights),
@@ -441,16 +497,16 @@ static std::map<std::string, float> SCMapFromWeightDict(NSDictionary<NSString *,
 }
 
 - (NSInteger)applyUpperBodyLean:(float)lean {
-    if (!self.data) return 0;
+    if (!self.data || self.modelLoadBusy) return 0;
     return (NSInteger)self.data->applyUpperBodyLean(lean);
 }
 
 - (void)clearUpperBodyDrive {
-    if (self.data) self.data->clearUpperBodyDrive();
+    if (self.data && !self.modelLoadBusy) self.data->clearUpperBodyDrive();
 }
 
 - (void)clearFaceDrive {
-    if (self.data) self.data->clearFaceDrive();
+    if (self.data && !self.modelLoadBusy) self.data->clearFaceDrive();
 }
 
 @end

@@ -16,6 +16,7 @@
 | AR Face → 模型 | 头姿、注视、眨眼、眉、嘴、舌、颊鼻等 |
 | Vision 上体 | 仅 **whiteMan** 左右倾 ±40°；**blackMan / Wolf 不做** |
 | AR Body | 关节摘要（不驱动当前人模） |
+| RTMP 推流 | **Avatar**（GL 离屏）或 **Cam**；H.264 + AAC → librtmp |
 
 ---
 
@@ -36,7 +37,14 @@ GL-ARKit/
     │   ├── SCRenderer.* / SCRendererData.*  # 渲染 + applyFaceDrive / lean
     │   ├── model.h / mesh.h / animation.*   # Assimp、morph 名表、骨 override
     │   └── …
-    ├── ocpp/GameViewController.mm   # UI + AR→GL 合并
+    ├── ocpp/GameViewController.mm   # UI + AR→GL 合并 + 推流控件
+    ├── liveStream/                  # RTMP 推流（见下文「GL → 视频」）
+    │   ├── PushStream.*             # 门面：Avatar / Cam、画质、FPS
+    │   ├── SCRenderCapture.*        # GL 离屏 → CVPixelBuffer
+    │   ├── H264Encoder.* / AACEncoder.*
+    │   ├── VideoCapture.* / AudioCapture.*
+    │   ├── RTMPStreamer.*           # FLV Tag → librtmp
+    │   └── rtmp/                    # librtmp + openssl 静态库
     ├── models/                      # CopyModels → bundle
     ├── shaders/ / assimp/ / libs/
 ```
@@ -239,6 +247,12 @@ Wolf：无 Spine1/2 → lean 自动 skip。
 19. 人模初始前倾：glb 默认 pitch≈−12°。  
 20. 头发/毛皮发黑：材质与双面兜底（见历史提交）。
 
+### 推流
+
+21. **全屏 glReadPixels 推流**：主线程/渲染卡死；用编码尺寸离屏 + TextureCache。  
+22. **Avatar 视频 PTS 从 0、音频用主机绝对时间**：播放器狂缓冲；RTMP 统一相对时钟。  
+23. **用编码结束时间做 FPS 限帧**：编码耗时会把 60 打成 ~30；现跟 DisplayLink，不再软件限帧。
+
 ---
 
 ## 关键源码
@@ -253,6 +267,104 @@ Wolf：无 Spine1/2 → lean 自动 skip。
 | `GL/SCRendererData.cpp` | `applyFaceDrive` / lean / 头骨缓存与平滑 |
 | `GL/model.h` | morph 名表（44 Unity / 51 Apple）、细脸骨检测 |
 | `GL/animation.cpp` | 骨 override；眼 replace vs 头脸相乘 |
+| `liveStream/PushStream.m` | 推流编排 Avatar/Cam |
+| `liveStream/SCRenderCapture.m` | 离屏 FBO + TextureCache |
+| `liveStream/H264Encoder.m` | VideoToolbox → AVCC |
+| `liveStream/RTMPStreamer.m` | FLV + RTMP |
+
+---
+
+## GL → 视频推流（Avatar）
+
+默认 **Src=Avatar · Vid=360×780 · 60fps**。核心：**不要**全屏 `glReadPixels`，而是按编码分辨率离屏直写 `CVPixelBuffer`，再进 VideoToolbox。
+
+### 总览图
+
+```
+CADisplayLink (preferredFramesPerSecond = 目标 FPS，如 60)
+    │
+    ▼
+SCRenderer.drawFrame
+    │
+    ├─① beginEncodePass          取池中 CVPixelBuffer(BGRA, 如 360×780)
+    │     │                      CVOpenGLESTextureCache → GL 纹理
+    │     │                      绑到离屏 FBO（颜色=该纹理）
+    │     ├─ resize(编码宽高) + FlipY
+    │     ├─ SCRendererData.render()     ← 场景画进像素缓冲（零拷贝共享）
+    │     └─ endEncodePass
+    │           glFlush + TextureCacheFlush
+    │           CMSampleBufferCreateForImageBuffer
+    │                │
+    │                ▼
+    │           PushStream.didOutputSampleBuffer
+    │                │
+    │                ▼
+    │           H264Encoder (VideoToolbox)
+    │                │  关键帧：SPS / PPS
+    │                │  帧数据：AVCC [4B len][NALU]…
+    │                ▼
+    │           RTMPStreamer → FLV Video Tag → librtmp → RTMP 服务器
+    │
+    └─② 屏幕 FBO + presentRenderbuffer     ← 本机预览（再渲一趟全屏）
+
+并行：麦克风 → AudioCapture → AACEncoder → RTMPStreamer（同一相对时间戳）
+```
+
+### 像素如何进 H.264
+
+```
+离屏 GL
+  → CVPixelBuffer (BGRA，编码尺寸，IOSurface / OpenGLESCompatible)
+  → CMSampleBuffer（带 PTS / duration）
+  → VTCompressionSessionEncodeFrame(imageBuffer)
+  → 回调 CMSampleBuffer（压缩后）
+       ├─ 关键帧：抽出 SPS、PPS → sendSPS/PPS（AVCDecoderConfigurationRecord）
+       └─ AVCC 载荷 → 按 NALU 拆 FLV Tag（0x17/0x27）→ RTMP_SendPacket
+```
+
+| 阶段 | 形态 | 说明 |
+|------|------|------|
+| GL 输出 | `CVPixelBuffer` BGRA | TextureCache 与 FBO 共享，无 CPU 大块拷贝 |
+| 送编码 | `CMSampleBuffer` | 包一层 timing，给 VideoToolbox |
+| 编码输出 | AVCC | `[长度][NALU]…`，**不是** `00 00 00 01` Annex-B |
+| 上线 | FLV over RTMP | 配置包 + 视频/音频 Tag；时间戳为相对 ms |
+
+### 为何离屏能减轻卡顿
+
+| 旧做法 | 现做法 |
+|--------|--------|
+| 先按**全屏**分辨率画完 | 离屏直接画 **360×780** 等编码尺寸 |
+| `glReadPixels` 整屏回读 CPU | `CVOpenGLESTextureCache`：GL 写 IOSurface，编码器直接读 |
+| GPU–CPU 同步，DisplayLink 掉帧 | 无全屏 readback；多付一次「小分辨率 render」 |
+
+仍会 **同一逻辑帧 render 两次**（离屏 + 上屏）。编码分辨率远小于屏幕时，通常比 readback 轻得多。
+
+### 帧率
+
+- `PushStream` 开播：`glRenderer.preferredFramesPerSecond = activeFPS`
+- Avatar：**每个** DisplayLink 回调抓一帧（不再做 `maxFPS` 软件丢帧）
+- Cam：相机本身约 30fps；仅当 UI 选 &lt;30 时在 `PushStream` 里节流
+
+### 相关源码
+
+| 文件 | 步骤 |
+|------|------|
+| `GL/SCRenderer.mm` `drawFrame:` | ① 离屏 ② 上屏 |
+| `liveStream/SCRenderCapture.m` | Pool / TextureCache / FBO / SampleBuffer |
+| `liveStream/H264Encoder.m` | VideoToolbox |
+| `liveStream/RTMPStreamer.m` | FLV + 统一时钟时间戳 |
+| `liveStream/PushStream.m` | 接线与默认 360×780@60 |
+
+### UI 操作（推流）
+
+| 控件 | 作用 |
+|------|------|
+| Live / Stop | 开始 / 停止 RTMP |
+| Src | Avatar（GL） / Cam |
+| Vid | 编码分辨率（19.5:9） |
+| FPS | 5…60；Avatar 驱动 DisplayLink |
+
+默认 URL：`rtmp://192.168.71.92:1935/live/teststream`（可在 `PushStream` / UI 改）。
 
 ---
 
@@ -261,6 +373,7 @@ Wolf：无 Spine1/2 → lean 自动 skip。
 1. Xcode 打开 `ARKit.xcodeproj`，真机，授权相机  
 2. 选 **BlackMan** 或 **WhiteMan**，**AR:Face**，双肩入镜（白模 lean）  
 3. 绿字：`DRIVE HEAD` / `EYE …` / `FACE …` / `LEAN=° Vision≈Hz`
+4. 推流：Src=Avatar，点 Live；播放器拉同一 RTMP 地址
 
 | 操作 | 效果 |
 |------|------|
@@ -269,9 +382,10 @@ Wolf：无 Spine1/2 → lean 自动 skip。
 | AR:Face / AR:Body | 追踪模式 |
 | W A S D / Up / Dn | 相机 |
 | 单指拖 / 双指捏 | 模型朝向 / FOV |
+| Live / Src / Vid / FPS | RTMP 推流（见上节） |
 
 ---
 
 ## 依赖
 
-OpenGL ES 3 · ARKit · Vision（iOS 14+）· Assimp · GLM · stb_image
+OpenGL ES 3 · ARKit · Vision（iOS 14+）· VideoToolbox · AudioToolbox · librtmp · Assimp · GLM · stb_image

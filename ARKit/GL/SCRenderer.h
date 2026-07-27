@@ -50,6 +50,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSString *> *)modelNames;
 - (NSInteger)currentModelIndex;
 - (BOOL)loadModelAtIndex:(NSInteger)index;
+/// Assimp+纹理在 sharegroup 后台线程；完成后主线程回调（不卡 UI）
+- (void)loadModelAtIndex:(NSInteger)index
+              completion:(void (^)(BOOL success))completion;
+- (void)loadDefaultModelWithCompletion:(void (^)(BOOL success))completion;
 
 /// ARKit 三路投射 → 驱动当前模型（头旋转 + 表情骨骼）。
 - (void)applyFaceProjectionHeadYaw:(float)yaw

@@ -1,6 +1,7 @@
 /*
   SCRenderCapture.h
-  编码尺寸离屏 FBO + CVOpenGLESTextureCache：直接渲进 CVPixelBuffer，避免全屏 glReadPixels。
+  Avatar 推流抓帧：编码尺寸离屏 FBO + CVOpenGLESTextureCache，
+  场景直接渲进 CVPixelBuffer（零拷贝进 VideoToolbox），避免全屏 glReadPixels 卡顿。
 */
 
 #import <Foundation/Foundation.h>
@@ -19,8 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SCRenderCapture : NSObject
 
 @property (nonatomic, weak, nullable) id<SCRenderCaptureDelegate> delegate;
+/// 仅用于 CMSampleBuffer.duration / 日志；帧率由 CADisplayLink.preferredFramesPerSecond 决定，此处不再软件限帧
 @property (nonatomic, assign) NSInteger maxFPS;
-/// 编码输出尺寸（应对齐 H264Encoder）；必填有效偶数尺寸
+/// 编码输出尺寸（须与 H264Encoder 一致）；偶数宽高
 @property (nonatomic, assign) CGSize outputSize;
 @property (nonatomic, readonly) CGSize captureSize;
 @property (nonatomic, readonly, getter=isCapturing) BOOL capturing;
@@ -33,9 +35,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)startCapture;
 - (void)stopCapture;
 
-/// 须在当前 EAGLContext 下调用。绑定离屏 FBO；返回 NO 则本帧跳过抓帧。
+/// 当前 EAGLContext 下：从池取 CVPixelBuffer → TextureCache 纹理 → 绑离屏 FBO；NO=本帧不抓
 - (BOOL)beginEncodePassWithContext:(EAGLContext *)context;
-/// 渲完离屏后调用：冲刷纹理缓存 → CMSampleBuffer → delegate
+/// 离屏渲完：flush → 包 CMSampleBuffer → delegate（再走 H264）
 - (void)endEncodePass;
 
 /// 释放 FBO / TextureCache（须在 EAGLContext 当前时）

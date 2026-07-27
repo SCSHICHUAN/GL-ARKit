@@ -147,18 +147,38 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = UIColor.blackColor;
+    self.view.backgroundColor = [UIColor colorWithRed:0.07 green:0.08 blue:0.10 alpha:1.0];
 
     self.glView = [[SCRenderer alloc] initWithFrame:self.view.bounds];
     self.glView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.glView];
-    [self.glView startRendering];
 
-    self.modelNames = [self.glView modelNames] ?: @[];
-    self.selectedModelIndex = [self.glView currentModelIndex];
-    self.animNames = [self.glView animationNames] ?: @[];
-    [self setupControls];
-    [self setupARKit];
+    // 先建遮罩，再异步 Assimp，避免启动/切模卡死主线程（黑屏无反馈）
+    [self setupLoadingOverlay];
+    [self setModelLoadingVisible:YES];
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return;
+        if (![self.glView startRendering]) {
+            [self setModelLoadingVisible:NO];
+            return;
+        }
+        [self.glView loadDefaultModelWithCompletion:^(BOOL ok) {
+            __strong typeof(weakSelf) self = weakSelf;
+            if (!self) return;
+            self.modelNames = [self.glView modelNames] ?: @[];
+            self.selectedModelIndex = [self.glView currentModelIndex];
+            self.animNames = [self.glView animationNames] ?: @[];
+            [self setupControls];
+            [self setupARKit];
+            [self setModelLoadingVisible:NO];
+            if (!ok) {
+                self.arDumpLabel.text = @"默认模型加载失败";
+            }
+        }];
+    });
 }
 
 - (void)viewDidLayoutSubviews {
@@ -859,13 +879,37 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     [self refreshLiveQualityButton];
     [self.view bringSubviewToFront:self.camPreviewView];
     [self.view bringSubviewToFront:self.movePad];
+    if (self.loadingOverlay) {
+        [self.view bringSubviewToFront:self.loadingOverlay];
+    }
+}
+
+- (void)setupLoadingOverlay {
+    if (self.loadingOverlay) return;
 
     self.loadingOverlay = [[UIView alloc] init];
     self.loadingOverlay.translatesAutoresizingMaskIntoConstraints = NO;
-    self.loadingOverlay.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    self.loadingOverlay.backgroundColor = [[UIColor colorWithRed:0.07 green:0.08 blue:0.10 alpha:1.0]
+                                           colorWithAlphaComponent:0.92];
     self.loadingOverlay.hidden = YES;
-    self.loadingOverlay.userInteractionEnabled = YES; // 挡住误点
+    self.loadingOverlay.userInteractionEnabled = YES;
     [self.view addSubview:self.loadingOverlay];
+
+    UILabel *title = [[UILabel alloc] init];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.text = @"GL-ARKit";
+    title.textColor = UIColor.whiteColor;
+    title.font = [UIFont systemFontOfSize:28 weight:UIFontWeightBold];
+    title.textAlignment = NSTextAlignmentCenter;
+    [self.loadingOverlay addSubview:title];
+
+    UILabel *sub = [[UILabel alloc] init];
+    sub.translatesAutoresizingMaskIntoConstraints = NO;
+    sub.text = @"Loading model…";
+    sub.textColor = [UIColor colorWithWhite:1 alpha:0.65];
+    sub.font = [UIFont systemFontOfSize:16];
+    sub.textAlignment = NSTextAlignmentCenter;
+    [self.loadingOverlay addSubview:sub];
 
     if (@available(iOS 13.0, *)) {
         self.loadingSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
@@ -881,12 +925,17 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.loadingOverlay.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.loadingOverlay.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [self.loadingOverlay.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [title.centerXAnchor constraintEqualToAnchor:self.loadingOverlay.centerXAnchor],
+        [title.centerYAnchor constraintEqualToAnchor:self.loadingOverlay.centerYAnchor constant:-36],
+        [sub.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
+        [sub.centerXAnchor constraintEqualToAnchor:self.loadingOverlay.centerXAnchor],
+        [self.loadingSpinner.topAnchor constraintEqualToAnchor:sub.bottomAnchor constant:20],
         [self.loadingSpinner.centerXAnchor constraintEqualToAnchor:self.loadingOverlay.centerXAnchor],
-        [self.loadingSpinner.centerYAnchor constraintEqualToAnchor:self.loadingOverlay.centerYAnchor],
     ]];
 }
 
 - (void)setModelLoadingVisible:(BOOL)visible {
+    if (!self.loadingOverlay) [self setupLoadingOverlay];
     self.modelLoading = visible;
     self.loadingOverlay.hidden = !visible;
     self.modelCollection.userInteractionEnabled = !visible;
@@ -941,16 +990,13 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     if (index == self.selectedModelIndex) return;
     if (index < 0 || index >= (NSInteger)self.modelNames.count) return;
 
-    // 先亮菊花再加载：同步 Assimp/GL 会卡住主线程，必须下一圈 runloop 才能画出来
     [self setModelLoadingVisible:YES];
     self.arDumpLabel.text = [NSString stringWithFormat:@"加载中… %@", self.modelNames[(NSUInteger)index]];
 
     __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^{
+    [self.glView loadModelAtIndex:index completion:^(BOOL ok) {
         __strong typeof(weakSelf) self = weakSelf;
         if (!self) return;
-
-        BOOL ok = [self.glView loadModelAtIndex:index];
         [self setModelLoadingVisible:NO];
         if (!ok) {
             self.arDumpLabel.text = [NSString stringWithFormat:@"模型加载失败: %@", self.modelNames[(NSUInteger)index]];
@@ -963,7 +1009,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self refreshAnimDropdown];
         self.arDumpLabel.text = [NSString stringWithFormat:@"已加载 %@", self.modelNames[(NSUInteger)index]];
         NSLog(@"[Model] switched to %@", self.modelNames[(NSUInteger)index]);
-    });
+    }];
 }
 
 #pragma mark - Button → SCRenderer
