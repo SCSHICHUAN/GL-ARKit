@@ -15,7 +15,6 @@
 #import <CoreImage/CoreImage.h>
 #import <math.h>
 
-static NSString * const kAnimCellId = @"AnimClipCell";
 static NSString * const kModelCellId = @"ModelCell";
 
 /// 与预览左右镜像对齐：Left↔Right 权重对调
@@ -87,8 +86,8 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 
 @interface GameViewController () <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, SCARKitSessionDelegate>
 @property (nonatomic, strong) SCRenderer *glView;
-@property (nonatomic, strong) UICollectionView *animCollection;
 @property (nonatomic, strong) UICollectionView *modelCollection;
+@property (nonatomic, strong) SCDropdownButton *animDropdown;
 @property (nonatomic, strong) UIButton *pauseButton;
 @property (nonatomic, strong) UIButton *arModeButton;
 @property (nonatomic, strong) UIButton *camPreviewButton;
@@ -160,6 +159,11 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
     self.animNames = [self.glView animationNames] ?: @[];
     [self setupControls];
     [self setupARKit];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self syncHostVideoRectToGL];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -252,18 +256,16 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
         else pitch = asinf(sinp);
         yaw = atan2f(2.f * (w * y - z * x), 1.f - 2.f * (x * x + y * y));
         roll = atan2f(2.f * (w * z + x * y), 1.f - 2.f * (y * y + z * z));
-        // 与预览镜像对齐：头左右 / 侧倾取反
-        yaw = -yaw;
-        roll = -roll;
+        // 相对旧版自拍镜像再取反：头 yaw/roll 用原始符号
         const float lim = 0.85f;
         yaw = fmaxf(-lim, fminf(lim, yaw));
         pitch = fmaxf(-lim, fminf(lim, pitch));
         roll = fmaxf(-lim * 0.5f, fminf(lim * 0.5f, roll));
     }
 
-    // 眼：左右骨对调 + 水平注视取反（与镜像预览同向）
-    float ePL = proj.eyePitchRight, eYL = -proj.eyeYawRight;
-    float ePR = proj.eyePitchLeft,  eYR = -proj.eyeYawLeft;
+    // 眼：相对旧版「对调+取反」再取反 → 左眼用左、右眼用右
+    float ePL = proj.eyePitchLeft, eYL = proj.eyeYawLeft;
+    float ePR = proj.eyePitchRight, eYR = proj.eyeYawRight;
 
     float smile = [proj.faceWeights[@"mouthSmileLeft"] floatValue] + [proj.faceWeights[@"mouthSmileRight"] floatValue];
     float brow = [proj.faceWeights[@"browInnerUp"] floatValue];
@@ -274,7 +276,7 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
     NSString *ubLine = @"LEAN: no pose (双肩入镜)";
     if (ub.valid) {
         ubLine = [NSString stringWithFormat:@"LEAN=%.0f° (±40) Vision≈%.0fHz bones=%ld",
-                  -ub.torsoLean * 180.f / (float)M_PI,
+                  ub.torsoLean * 180.f / (float)M_PI,
                   self.upperBodyProjector.measuredHz, (long)self.lastLeanBoneCount];
     }
     NSString *text = [NSString stringWithFormat:
@@ -293,8 +295,8 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
     self.pendingEyeYawL = eYL;
     self.pendingEyePitchR = ePR;
     self.pendingEyeYawR = eYR;
-    self.pendingEyeWeights = SCARMirrorLRWeights(proj.eyeWeights);
-    self.pendingFaceWeights = SCARMirrorLRWeights(proj.faceWeights);
+    self.pendingEyeWeights = proj.eyeWeights;
+    self.pendingFaceWeights = proj.faceWeights;
     self.pendingDumpText = text;
 
     if (self.faceDrivePending) return;
@@ -319,19 +321,13 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 didUpdateCapturedImage:(CVPixelBufferRef)image
       orientation:(CGImagePropertyOrientation)orientation {
     (void)session;
-    // Cam:Off 时整条预览链路停：不拷帧、不转图（lean/Vision 仍走自己的路径）
-    if (self.camPreviewEnabled) {
+    // Cam:On → GL 左下角小窗（与原 UIKit 预览同位同尺寸）
+    if (self.camPreviewEnabled && self.glView.hostVideoVisible) {
+        static CFTimeInterval sLastGLVideo = 0;
         CFTimeInterval now = CACurrentMediaTime();
-        // ~12Hz：小窗预览够用，少 memcpy 少卡 GL
-        if (self.lastCamPreviewGrabTime <= 0 || (now - self.lastCamPreviewGrabTime) >= (1.0 / 12.0)) {
-            CVPixelBufferRef copy = SCARClonePixelBuffer(image);
-            if (copy) {
-                if (self.camPreviewPendingBuffer) CVPixelBufferRelease(self.camPreviewPendingBuffer);
-                self.camPreviewPendingBuffer = copy;
-                self.camPreviewPendingOrientation = orientation;
-                self.camPreviewPendingDirty = YES;
-                self.lastCamPreviewGrabTime = now;
-            }
+        if (sLastGLVideo <= 0 || (now - sLastGLVideo) >= (1.0 / 24.0)) {
+            [self.glView submitHostVideoPixelBuffer:image orientation:orientation];
+            sLastGLVideo = now;
         }
     }
     // blackMan 不做 lean：跳过 Vision，把算力留给头/脸
@@ -420,9 +416,11 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
 }
 
 - (void)applyCamPreviewVisible:(BOOL)on {
-    self.camPreviewView.hidden = !on;
+    // UIKit 小窗只占位；真人画面改由 GL YUV 长方形绘制（同位置同大小，可进推流）
+    self.camPreviewView.hidden = YES;
+    self.camPreviewView.image = nil;
+    self.glView.hostVideoVisible = on;
     if (!on) {
-        // 完全关掉预览：停抓帧、清缓冲、丢 CI、清图
         [self tearDownCamPreviewPipeline];
     }
     [self.camPreviewButton setTitle:(on ? @"Cam:On" : @"Cam:Off") forState:UIControlStateNormal];
@@ -430,6 +428,15 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.camPreviewHeight.constant = on ? 144.0 : 0.0;
     self.movePadLeadingToSafe.active = !on;
     self.movePadLeadingToPreview.active = on;
+    [self syncHostVideoRectToGL];
+}
+
+- (void)syncHostVideoRectToGL {
+    if (!self.glView || !self.camPreviewView) return;
+    // 即使 UIImageView hidden，约束仍给出与原先预览相同的 frame
+    [self.view layoutIfNeeded];
+    CGRect r = [self.camPreviewView convertRect:self.camPreviewView.bounds toView:self.glView];
+    [self.glView setHostVideoScreenRect:r];
 }
 
 #pragma mark - Live（Media ViewController → PushStream + 开关）
@@ -547,12 +554,13 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
 /// 与屏幕刷新同拍：上体 lean + 相机预览
 - (void)tickDisplayLink:(CADisplayLink *)link {
     (void)link;
+    [self syncHostVideoRectToGL];
     [self flushCameraPreviewOnDisplayLink];
     if (!self.upperBodyProjector) return;
     SCARUpperBodyDrive *ub = [self.upperBodyProjector latestDrive];
     if (ub.valid) {
-        // 与预览镜像对齐：躯干左右 lean 取反
-        self.lastLeanBoneCount = [self.glView applyUpperBodyLean:-ub.torsoLean];
+        // 肩 lean 直接驱动，不再取反
+        self.lastLeanBoneCount = [self.glView applyUpperBodyLean:ub.torsoLean];
     }
 }
 
@@ -641,8 +649,18 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.modelCollection = [self makeChipCollection:kModelCellId];
     [self.view addSubview:self.modelCollection];
 
-    self.animCollection = [self makeChipCollection:kAnimCellId];
-    [self.view addSubview:self.animCollection];
+    __weak typeof(self) weakSelf = self;
+    NSArray<NSString *> *anims = self.animNames.count ? self.animNames : @[@"—"];
+    self.animDropdown = [[SCDropdownButton alloc] initWithPrefix:@"Anim"
+                                                         options:anims
+                                                   selectedIndex:0];
+    self.animDropdown.panelAlignment = SCDropdownPanelAlignmentLeading;
+    self.animDropdown.selectionHandler = ^(NSInteger index, __unused NSString *title) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || index < 0 || index >= (NSInteger)self.animNames.count) return;
+        [self.glView playAnimationAtIndex:index];
+    };
+    [self.view addSubview:self.animDropdown];
 
     self.pauseButton = [self makeButton:@"Pause" action:@selector(togglePause)];
     self.pauseButton.translatesAutoresizingMaskIntoConstraints = NO;
@@ -660,8 +678,8 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.liveButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.liveButton];
 
-    self.liveVideoQuality = PushStreamVideoQuality720p; // 828×1792 = iPhone 11 19.5:9
-    self.liveFPS = PushStreamFPS30;
+    self.liveVideoQuality = PushStreamVideoQualityLow320x240; // 360×780
+    self.liveFPS = PushStreamFPS60;
     self.liveVideoSource = PushStreamVideoSourceAvatar;
     self.liveQualityValues = @[
         @(PushStreamVideoQualityLow320x240),
@@ -695,12 +713,12 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [srcTitles addObject:[PushStream titleForVideoSource:(PushStreamVideoSource)n.integerValue]];
     }
 
-    __weak typeof(self) weakSelf = self;
+    __weak typeof(self) weakSelfLive = self;
     self.liveSourceButton = [[SCDropdownButton alloc] initWithPrefix:@"Src"
                                                               options:srcTitles
                                                         selectedIndex:[self indexForLiveSource:self.liveVideoSource]];
     self.liveSourceButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
-        __strong typeof(weakSelf) self = weakSelf;
+        __strong typeof(weakSelfLive) self = weakSelfLive;
         if (!self || index < 0 || index >= (NSInteger)self.liveSourceValues.count) return;
         self.liveVideoSource = (PushStreamVideoSource)self.liveSourceValues[index].integerValue;
     };
@@ -710,7 +728,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
                                                               options:vqTitles
                                                         selectedIndex:[self indexForLiveQuality:self.liveVideoQuality]];
     self.liveQualityButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
-        __strong typeof(weakSelf) self = weakSelf;
+        __strong typeof(weakSelfLive) self = weakSelfLive;
         if (!self || index < 0 || index >= (NSInteger)self.liveQualityValues.count) return;
         self.liveVideoQuality = (PushStreamVideoQuality)self.liveQualityValues[index].integerValue;
     };
@@ -720,7 +738,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
                                                           options:fpsTitles
                                                     selectedIndex:[self indexForLiveFPS:self.liveFPS]];
     self.liveFPSButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
-        __strong typeof(weakSelf) self = weakSelf;
+        __strong typeof(weakSelfLive) self = weakSelfLive;
         if (!self || index < 0 || index >= (NSInteger)self.liveFPSValues.count) return;
         self.liveFPS = (PushStreamFPS)self.liveFPSValues[index].integerValue;
     };
@@ -817,10 +835,10 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.modelCollection.topAnchor constraintEqualToAnchor:g.topAnchor constant:8],
         [self.modelCollection.heightAnchor constraintEqualToConstant:36],
 
-        [self.animCollection.leadingAnchor constraintEqualToAnchor:self.modelCollection.leadingAnchor],
-        [self.animCollection.trailingAnchor constraintEqualToAnchor:self.modelCollection.trailingAnchor],
-        [self.animCollection.topAnchor constraintEqualToAnchor:self.modelCollection.bottomAnchor constant:6],
-        [self.animCollection.heightAnchor constraintEqualToConstant:36],
+        // 左边第二排第一个：动画下拉
+        [self.animDropdown.leadingAnchor constraintEqualToAnchor:self.modelCollection.leadingAnchor],
+        [self.animDropdown.topAnchor constraintEqualToAnchor:self.modelCollection.bottomAnchor constant:6],
+        [self.animDropdown.heightAnchor constraintEqualToConstant:36],
 
         // 左下角相机预览（关闭时宽高归零，不占位）
         [self.camPreviewView.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
@@ -872,6 +890,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.modelLoading = visible;
     self.loadingOverlay.hidden = !visible;
     self.modelCollection.userInteractionEnabled = !visible;
+    self.animDropdown.enabled = !visible;
     if (visible) {
         [self.view bringSubviewToFront:self.loadingOverlay];
         [self.loadingSpinner startAnimating];
@@ -880,41 +899,37 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     }
 }
 
+- (void)refreshAnimDropdown {
+    NSArray<NSString *> *opts = self.animNames.count ? self.animNames : @[@"—"];
+    self.animDropdown.options = opts;
+    self.animDropdown.selectedIndex = 0;
+}
+
 #pragma mark - UICollectionView
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    if (collectionView == self.modelCollection) return (NSInteger)self.modelNames.count;
-    return (NSInteger)self.animNames.count;
+    (void)collectionView;
+    return (NSInteger)self.modelNames.count;
 }
 
 - (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    BOOL isModel = (collectionView == self.modelCollection);
-    NSString *reuse = isModel ? kModelCellId : kAnimCellId;
-    AnimClipCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:reuse forIndexPath:indexPath];
-    if (isModel) {
-        cell.titleLabel.text = self.modelNames[(NSUInteger)indexPath.item];
-        [cell setHighlightedSelected:(indexPath.item == self.selectedModelIndex)];
-    } else {
-        cell.titleLabel.text = self.animNames[(NSUInteger)indexPath.item];
-        [cell setHighlightedSelected:NO];
-    }
+    AnimClipCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:kModelCellId forIndexPath:indexPath];
+    cell.titleLabel.text = self.modelNames[(NSUInteger)indexPath.item];
+    [cell setHighlightedSelected:(indexPath.item == self.selectedModelIndex)];
     return cell;
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    if (collectionView == self.modelCollection) {
-        [self switchToModelAtIndex:indexPath.item];
-        return;
-    }
-    [self.glView playAnimationAtIndex:indexPath.item];
+    (void)collectionView;
+    [self switchToModelAtIndex:indexPath.item];
 }
 
 - (CGSize)collectionView:(UICollectionView *)collectionView
                   layout:(UICollectionViewLayout *)collectionViewLayout
   sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSString *name = (collectionView == self.modelCollection)
-        ? self.modelNames[(NSUInteger)indexPath.item]
-        : self.animNames[(NSUInteger)indexPath.item];
+    (void)collectionView;
+    (void)collectionViewLayout;
+    NSString *name = self.modelNames[(NSUInteger)indexPath.item];
     CGSize textSize = [name sizeWithAttributes:@{
         NSFontAttributeName: [UIFont monospacedDigitSystemFontOfSize:14 weight:UIFontWeightSemibold]
     }];
@@ -945,7 +960,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         self.selectedModelIndex = index;
         self.animNames = [self.glView animationNames] ?: @[];
         [self.modelCollection reloadData];
-        [self.animCollection reloadData];
+        [self refreshAnimDropdown];
         self.arDumpLabel.text = [NSString stringWithFormat:@"已加载 %@", self.modelNames[(NSUInteger)index]];
         NSLog(@"[Model] switched to %@", self.modelNames[(NSUInteger)index]);
     });

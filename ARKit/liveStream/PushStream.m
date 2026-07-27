@@ -43,8 +43,8 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _videoQuality = PushStreamVideoQualityStandard;
-        _fps = PushStreamFPS30;
+        _videoQuality = PushStreamVideoQualityLow320x240; // 360×780
+        _fps = PushStreamFPS60;
         _videoSource = PushStreamVideoSourceAvatar;
         _rtmpURL = [kDefaultRTMPURL copy];
     }

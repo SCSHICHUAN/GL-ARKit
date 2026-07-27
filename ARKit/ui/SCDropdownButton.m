@@ -25,6 +25,7 @@ static __weak SCDropdownButton *gOpenDropdown = nil;
         _options = [options copy] ?: @[];
         _selectedIndex = MAX(0, MIN(selectedIndex, (NSInteger)_options.count - 1));
         _enabled = YES;
+        _panelAlignment = SCDropdownPanelAlignmentTrailing;
         self.translatesAutoresizingMaskIntoConstraints = NO;
         [self buildTrigger];
         [self refreshTitle];
@@ -165,16 +166,22 @@ static __weak SCDropdownButton *gOpenDropdown = nil;
 
     CGRect triggerInHost = [self.triggerButton convertRect:self.triggerButton.bounds toView:host];
     CGFloat panelW = MAX(CGRectGetWidth(triggerInHost), 140);
-    [NSLayoutConstraint activateConstraints:@[
+    NSMutableArray<NSLayoutConstraint *> *cs = [NSMutableArray arrayWithArray:@[
         [stack.leadingAnchor constraintEqualToAnchor:self.panel.leadingAnchor],
         [stack.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor],
         [stack.topAnchor constraintEqualToAnchor:self.panel.topAnchor],
         [stack.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor],
-
         [self.panel.topAnchor constraintEqualToAnchor:host.topAnchor constant:CGRectGetMaxY(triggerInHost) + 4],
-        [self.panel.trailingAnchor constraintEqualToAnchor:host.leadingAnchor constant:CGRectGetMaxX(triggerInHost)],
         [self.panel.widthAnchor constraintGreaterThanOrEqualToConstant:panelW],
     ]];
+    if (self.panelAlignment == SCDropdownPanelAlignmentLeading) {
+        [cs addObject:[self.panel.leadingAnchor constraintEqualToAnchor:host.leadingAnchor
+                                                              constant:CGRectGetMinX(triggerInHost)]];
+    } else {
+        [cs addObject:[self.panel.trailingAnchor constraintEqualToAnchor:host.leadingAnchor
+                                                               constant:CGRectGetMaxX(triggerInHost)]];
+    }
+    [NSLayoutConstraint activateConstraints:cs];
 
     self.panel.transform = CGAffineTransformMakeTranslation(0, -6);
     self.panel.alpha = 0;

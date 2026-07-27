@@ -241,9 +241,25 @@ struct SCRendererData::Impl {
     Model* ourModel = nullptr;
     Shader* ourShader = nullptr;
     Shader* lightCubeShader = nullptr;
+    Shader* yuvQuadShader = nullptr;
 
     glm::vec3 lightPos = glm::vec3(1.0f, 0.0f, 0.0f);
     unsigned int cubeVAO = 0, lightCubeVAO = 0, VBO = 0;
+    unsigned int videoQuadVAO = 0, videoQuadVBO = 0;
+
+    unsigned int hostVideoYTex = 0;
+    unsigned int hostVideoUVTex = 0;
+    bool hostVideoValid = false;
+    bool hostVideoVisible = true;
+    int hostVideoOrientation = 6; // CGImagePropertyOrientationRight
+    bool hostVideoMirrorX = true;
+    // 相对屏幕：左上原点归一化 rect（与 camPreviewView 对齐）
+    float hostVideoRectX = 0.02f;
+    float hostVideoRectY = 0.75f;
+    float hostVideoRectW = 0.15f;
+    float hostVideoRectH = 0.18f;
+    bool hostVideoRectValid = false;
+    float hostVideoRotDeg = 0.0f; // 绕对角线，限制 0~90°
 
     int screenWidth = 1000;
     int screenHeight = 750;
@@ -496,9 +512,12 @@ struct SCRendererData::Impl {
         destroyCurrentModel();
         delete ourShader;
         delete lightCubeShader;
+        delete yuvQuadShader;
         if (cubeVAO) glDeleteVertexArrays(1, &cubeVAO);
         if (lightCubeVAO) glDeleteVertexArrays(1, &lightCubeVAO);
         if (VBO) glDeleteBuffers(1, &VBO);
+        if (videoQuadVAO) glDeleteVertexArrays(1, &videoQuadVAO);
+        if (videoQuadVBO) glDeleteBuffers(1, &videoQuadVBO);
     }
 
     void createVBOVAO() {
@@ -561,6 +580,90 @@ struct SCRendererData::Impl {
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
+
+        // 单位矩形：中心原点，朝 +Z，UV 左下→右上
+        float quad[] = {
+            // pos              uv
+            -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+             0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
+            -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
+            -0.5f,  0.5f, 0.0f,  0.0f, 1.0f,
+        };
+        glGenVertexArrays(1, &videoQuadVAO);
+        glGenBuffers(1, &videoQuadVBO);
+        glBindVertexArray(videoQuadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, videoQuadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        glBindVertexArray(0);
+    }
+
+    void drawHostVideoQuad(const glm::mat4& /*projection*/, const glm::mat4& /*view*/) {
+        if (!hostVideoVisible || !hostVideoValid || !yuvQuadShader || !videoQuadVAO) return;
+        if (!hostVideoYTex || !hostVideoUVTex || !hostVideoRectValid) return;
+
+        // 屏幕空间 NDC（与前置预览小窗同位置同大小）；不受场景相机影响
+        float L = hostVideoRectX;
+        float T = hostVideoRectY;
+        float W = hostVideoRectW;
+        float H = hostVideoRectH;
+        if (W <= 1e-4f || H <= 1e-4f) return;
+
+        float ndcL = L * 2.0f - 1.0f;
+        float ndcR = (L + W) * 2.0f - 1.0f;
+        float ndcT = 1.0f - T * 2.0f;
+        float ndcB = 1.0f - (T + H) * 2.0f;
+        // 编码 FBO：3D 已 FlipY，屏幕空间小窗要镜像 Y，才能仍在观看端下方
+        if (renderFlipY) {
+            float nt = -ndcB;
+            float nb = -ndcT;
+            ndcT = nt;
+            ndcB = nb;
+        }
+        float cx = 0.5f * (ndcL + ndcR);
+        float cy = 0.5f * (ndcB + ndcT);
+        float sx = (ndcR - ndcL);
+        float sy = (ndcT - ndcB);
+
+        // 绕视频面可视对角线（左下→右上）旋转，限制 0~90°
+        float ang = glm::radians(hostVideoRotDeg);
+        glm::vec3 diag = glm::normalize(glm::vec3(sx, sy, 0.0f));
+        glm::mat4 ident(1.0f);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, glm::vec3(cx, cy, 0.0f));
+        model = glm::rotate(model, ang, diag);
+        model = glm::scale(model, glm::vec3(sx, sy, 1.0f));
+
+        GLboolean depthWas = glIsEnabled(GL_DEPTH_TEST);
+        glDisable(GL_DEPTH_TEST);
+
+        yuvQuadShader->use();
+        yuvQuadShader->setMat4("projection", ident);
+        yuvQuadShader->setMat4("view", ident);
+        yuvQuadShader->setMat4("model", model);
+        yuvQuadShader->setInt("yTex", 0);
+        yuvQuadShader->setInt("uvTex", 1);
+        yuvQuadShader->setInt("orientation", hostVideoOrientation);
+        yuvQuadShader->setBool("mirrorX", hostVideoMirrorX);
+        // 显示端 upright；编码 FlipY 后小窗内容要再竖翻一次，观看端才正
+        yuvQuadShader->setBool("flipTexY", renderFlipY);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, hostVideoYTex);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, hostVideoUVTex);
+
+        glBindVertexArray(videoQuadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+        glActiveTexture(GL_TEXTURE0);
+
+        if (depthWas) glEnable(GL_DEPTH_TEST);
     }
 
     void buildAnimKeyMap() {
@@ -658,6 +761,11 @@ bool SCRendererData::init(const std::string& resourceRoot, int width, int height
 
     impl_->lightCubeShader = new Shader(lampVs.c_str(), lampFs.c_str());
     impl_->ourShader = new Shader(colorVs.c_str(), colorFs.c_str());
+    {
+        std::string yuvVs = resourceRoot + "/shaders/yuv-quad-vs.vs";
+        std::string yuvFs = resourceRoot + "/shaders/yuv-quad-fs.fs";
+        impl_->yuvQuadShader = new Shader(yuvVs.c_str(), yuvFs.c_str());
+    }
 
     bool loaded = false;
     for (int i = 0; i < (int)impl_->catalog.size(); ++i) {
@@ -858,6 +966,47 @@ void SCRendererData::render() {
     } else {
         impl_->ourModel->Draw(*impl_->ourShader, nullptr);
     }
+
+    // 主播摄像头 YUV 长方形（世界空间，进 Avatar 推流）
+    impl_->drawHostVideoQuad(projection, view);
+}
+
+void SCRendererData::setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid) {
+    if (!impl_) return;
+    impl_->hostVideoYTex = yTex;
+    impl_->hostVideoUVTex = uvTex;
+    impl_->hostVideoValid = valid;
+}
+
+void SCRendererData::setHostVideoOrientation(int cgImageOrientation) {
+    if (!impl_) return;
+    impl_->hostVideoOrientation = cgImageOrientation;
+}
+
+void SCRendererData::setHostVideoMirrorX(bool mirror) {
+    if (!impl_) return;
+    impl_->hostVideoMirrorX = mirror;
+}
+
+void SCRendererData::setHostVideoVisible(bool visible) {
+    if (!impl_) return;
+    impl_->hostVideoVisible = visible;
+}
+
+void SCRendererData::setHostVideoScreenRectNorm(float x, float y, float w, float h) {
+    if (!impl_) return;
+    impl_->hostVideoRectX = x;
+    impl_->hostVideoRectY = y;
+    impl_->hostVideoRectW = w;
+    impl_->hostVideoRectH = h;
+    impl_->hostVideoRectValid = (w > 1e-4f && h > 1e-4f);
+}
+
+void SCRendererData::setHostVideoRotationDegrees(float degrees) {
+    if (!impl_) return;
+    if (degrees < 0.f) degrees = 0.f;
+    if (degrees > 90.f) degrees = 90.f;
+    impl_->hostVideoRotDeg = degrees;
 }
 
 void SCRendererData::onTouchBegan(float x, float y) {

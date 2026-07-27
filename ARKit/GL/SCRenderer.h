@@ -4,6 +4,7 @@
 */
 
 #import <UIKit/UIKit.h>
+#import <CoreVideo/CoreVideo.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -15,9 +16,20 @@ NS_ASSUME_NONNULL_BEGIN
 /// 直播抓帧（SCRenderCapture attach 后设置）；encode 尺寸离屏再画屏
 @property (nonatomic, weak, nullable) SCRenderCapture *renderCapture;
 @property (nonatomic, strong, readonly, nullable) EAGLContext *eaglContext;
+/// 场景中主播摄像头 YUV 长方形（默认开；进 Avatar 推流）
+@property (nonatomic, assign) BOOL hostVideoVisible;
 
 /// Start GLES context, scene, and display link. Call once after added to hierarchy (or from VC viewDidLoad).
 - (BOOL)startRendering;
+
+/// ARKit capturedImage → GL 面板（内部 retain；在渲染线程上传纹理）
+- (void)submitHostVideoPixelBuffer:(CVPixelBufferRef)pixelBuffer
+                       orientation:(CGImagePropertyOrientation)orientation;
+
+/// 与 UIKit 前置预览小窗对齐（glView 坐标系，点）
+- (void)setHostVideoScreenRect:(CGRect)rectInGLView;
+/// 视频矩形绕面对角线旋转角（度），[0, 90]，按住小窗上下拖
+@property (nonatomic, assign) float hostVideoRotationDegrees;
 
 /// Camera move (hold buttons typically call these).
 - (void)setMoveForward:(BOOL)on;

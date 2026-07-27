@@ -5,7 +5,10 @@
 
 #import "SCRenderer.h"
 #import "SCRenderCapture.h"
+#import "SCHostVideoPlane.h"
+#import "SCARPixelBufferCopy.h"
 #import <QuartzCore/QuartzCore.h>
+#import <CoreVideo/CoreVideo.h>
 #import <OpenGLES/ES3/gl.h>
 #import <OpenGLES/ES3/glext.h>
 #include "SCRendererData.h"
@@ -26,6 +29,13 @@
 @property (nonatomic, assign) int backingHeight;
 @property (nonatomic, assign) CFTimeInterval lastTimestamp;
 @property (nonatomic, assign) BOOL started;
+@property (nonatomic, strong) SCHostVideoPlane *hostVideoPlane;
+@property (nonatomic, assign) CVPixelBufferRef pendingHostVideoBuffer;
+@property (nonatomic, assign) CGImagePropertyOrientation pendingHostVideoOrientation;
+@property (nonatomic, assign) CGRect hostVideoHitRect;
+@property (nonatomic, assign) BOOL hostVideoDragging;
+@property (nonatomic, assign) CGFloat hostVideoDragStartX;
+@property (nonatomic, assign) float hostVideoDragStartRot;
 @end
 
 @implementation SCRenderer
@@ -47,6 +57,9 @@
             kEAGLDrawablePropertyRetainedBacking: @NO,
             kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8
         };
+        _hostVideoVisible = YES;
+        _hostVideoPlane = [[SCHostVideoPlane alloc] init];
+        _pendingHostVideoOrientation = kCGImagePropertyOrientationRight;
     }
     return self;
 }
@@ -96,7 +109,12 @@
     if (self.context) {
         [EAGLContext setCurrentContext:self.context];
         [self.renderCapture destroyGLResources];
+        [self.hostVideoPlane destroyGLResources];
         [self destroyFramebuffer];
+    }
+    if (self.pendingHostVideoBuffer) {
+        CVPixelBufferRelease(self.pendingHostVideoBuffer);
+        self.pendingHostVideoBuffer = NULL;
     }
     delete self.data;
     self.data = nullptr;
@@ -160,8 +178,9 @@
     if (dt > 0.1f) dt = 0.1f;
 
     self.data->update(dt);
+    [self flushHostVideoToGL];
 
-    // ① 直播：直接渲到编码尺寸的 CVPixelBuffer（TextureCache，无全屏 readPixels）
+    // ① 直播：编码 FBO 顶原点 → 场景 FlipY；小窗在 drawHostVideoQuad 里同步镜像位置
     SCRenderCapture *cap = self.renderCapture;
     if (cap.isCapturing && [cap beginEncodePassWithContext:self.context]) {
         const int cw = cap.captureWidth;
@@ -184,6 +203,79 @@
     [self.context presentRenderbuffer:GL_RENDERBUFFER];
 }
 
+- (void)flushHostVideoToGL {
+    if (!self.data || !self.hostVideoPlane) return;
+    self.data->setHostVideoVisible(self.hostVideoVisible);
+
+    CVPixelBufferRef buf = self.pendingHostVideoBuffer;
+    if (buf) {
+        self.pendingHostVideoBuffer = NULL;
+        CGImagePropertyOrientation ori = self.pendingHostVideoOrientation;
+        if ([self.hostVideoPlane ensureCacheWithContext:self.context]) {
+            [self.hostVideoPlane updateWithPixelBuffer:buf orientation:ori];
+        }
+        CVPixelBufferRelease(buf);
+    }
+
+    if (self.hostVideoPlane.hasTexture) {
+        self.data->setHostVideoTextures(self.hostVideoPlane.yTextureName,
+                                        self.hostVideoPlane.uvTextureName,
+                                        true);
+        self.data->setHostVideoOrientation((int)self.hostVideoPlane.orientation);
+        self.data->setHostVideoMirrorX(self.hostVideoPlane.mirrorX);
+    } else {
+        self.data->setHostVideoTextures(0, 0, false);
+    }
+}
+
+- (void)submitHostVideoPixelBuffer:(CVPixelBufferRef)pixelBuffer
+                       orientation:(CGImagePropertyOrientation)orientation {
+    if (!pixelBuffer) return;
+    // ARFrame 缓冲离开回调可能失效：CPU 深拷贝后再排队给渲染线程
+    CVPixelBufferRef copy = SCARClonePixelBuffer(pixelBuffer);
+    if (!copy) return;
+    if (self.pendingHostVideoBuffer) {
+        CVPixelBufferRelease(self.pendingHostVideoBuffer);
+    }
+    self.pendingHostVideoBuffer = copy;
+    self.pendingHostVideoOrientation = orientation;
+}
+
+- (void)setHostVideoVisible:(BOOL)visible {
+    _hostVideoVisible = visible;
+    if (self.data) self.data->setHostVideoVisible(visible);
+}
+
+- (BOOL)isHostVideoVisible {
+    return _hostVideoVisible;
+}
+
+- (void)setHostVideoScreenRect:(CGRect)rectInGLView {
+    self.hostVideoHitRect = rectInGLView;
+    if (!self.data) return;
+    CGFloat bw = CGRectGetWidth(self.bounds);
+    CGFloat bh = CGRectGetHeight(self.bounds);
+    if (bw < 1.0 || bh < 1.0) return;
+    float x = (float)(rectInGLView.origin.x / bw);
+    float y = (float)(rectInGLView.origin.y / bh);
+    float w = (float)(rectInGLView.size.width / bw);
+    float h = (float)(rectInGLView.size.height / bh);
+    self.data->setHostVideoScreenRectNorm(x, y, w, h);
+}
+
+- (void)setHostVideoRotationDegrees:(float)degrees {
+    if (degrees < 0.f) degrees = 0.f;
+    if (degrees > 90.f) degrees = 90.f;
+    _hostVideoRotationDegrees = degrees;
+    if (self.data) self.data->setHostVideoRotationDegrees(degrees);
+}
+
+- (BOOL)pointInsideHostVideo:(CGPoint)p {
+    if (!self.hostVideoVisible) return NO;
+    if (CGRectIsEmpty(self.hostVideoHitRect) || CGRectGetWidth(self.hostVideoHitRect) < 1) return NO;
+    return CGRectContainsPoint(self.hostVideoHitRect, p);
+}
+
 #pragma mark - Camera gestures
 
 - (void)setupCameraGestures {
@@ -203,16 +295,30 @@
 
 - (void)onPan:(UIPanGestureRecognizer *)gr {
     if (!self.data) return;
-    // Use translation deltas — more stable than absolute location for pitch/yaw.
     CGFloat scale = self.contentScaleFactor;
     if (gr.state == UIGestureRecognizerStateBegan) {
         CGPoint p = [gr locationInView:self];
+        if ([self pointInsideHostVideo:p]) {
+            self.hostVideoDragging = YES;
+            self.hostVideoDragStartX = p.y; // 复用字段存起始 Y
+            self.hostVideoDragStartRot = self.hostVideoRotationDegrees;
+            [gr setTranslation:CGPointZero inView:self];
+            return;
+        }
+        self.hostVideoDragging = NO;
         self.data->onTouchBegan((float)(p.x * scale), (float)(p.y * scale));
         [gr setTranslation:CGPointZero inView:self];
     } else if (gr.state == UIGestureRecognizerStateChanged) {
+        if (self.hostVideoDragging) {
+            // 按住小窗上下拖：整高约对应 0→90°（上滑增大）
+            CGFloat h = MAX(CGRectGetHeight(self.hostVideoHitRect), 1.0);
+            CGFloat dy = self.hostVideoDragStartX - [gr locationInView:self].y;
+            float deg = self.hostVideoDragStartRot + (float)(dy / h * 90.0);
+            self.hostVideoRotationDegrees = deg;
+            return;
+        }
         CGPoint t = [gr translationInView:self];
         CGPoint p = [gr locationInView:self];
-        // Feed previous point + delta via began/moved convention:
         float x = (float)(p.x * scale);
         float y = (float)(p.y * scale);
         float prevX = x - (float)(t.x * scale);
@@ -221,6 +327,10 @@
         self.data->onTouchMoved(x, y);
         [gr setTranslation:CGPointZero inView:self];
     } else {
+        if (self.hostVideoDragging) {
+            self.hostVideoDragging = NO;
+            return;
+        }
         self.data->onTouchEnded();
     }
 }

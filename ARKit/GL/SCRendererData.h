@@ -22,6 +22,16 @@ public:
     /// 渲到 CVPixelBuffer 时翻转 Y（GL 底原点 → 视频顶原点）
     void setRenderFlipY(bool flipY);
 
+    /// 主播 YUV 面板（GLuint 纹理，由 ObjC TextureCache 上传）
+    void setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid);
+    void setHostVideoOrientation(int cgImageOrientation /*1..8*/);
+    void setHostVideoMirrorX(bool mirror);
+    void setHostVideoVisible(bool visible);
+    /// UIKit 坐标归一化到 glView：x,y 左上原点，宽高相对 view bounds（0~1）
+    void setHostVideoScreenRectNorm(float x, float y, float w, float h);
+    /// 视频矩形绕面对角线旋转角（度），范围 [0, 90]
+    void setHostVideoRotationDegrees(float degrees);
+
     // Touch / gesture input (replaces mouse + keyboard)
     void onTouchBegan(float x, float y);
     void onTouchMoved(float x, float y);

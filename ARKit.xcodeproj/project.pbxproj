@@ -12,6 +12,9 @@
 		257F56CE53164DC8B22D2E13 /* lamp-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = D70F778CA631448EAE7F8399 /* lamp-vs.vs */; };
 		26D7B5F6F0924421999773D6 /* colors-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 26E020C3872A4005B77533C9 /* colors-vs.vs */; };
 		43D0639593294682A7A9EA72 /* lamp-fs.fs in CopyShaders */ = {isa = PBXBuildFile; fileRef = 6A26192DE3D54569B2683689 /* lamp-fs.fs */; };
+		A1HOSTVID00000000000001 /* yuv-quad-vs.vs in CopyShaders */ = {isa = PBXBuildFile; fileRef = A1HOSTVID00000000000010 /* yuv-quad-vs.vs */; };
+		A1HOSTVID00000000000002 /* yuv-quad-fs.fs in CopyShaders */ = {isa = PBXBuildFile; fileRef = A1HOSTVID00000000000011 /* yuv-quad-fs.fs */; };
+		A1HOSTVID00000000000003 /* SCHostVideoPlane.m in Sources */ = {isa = PBXBuildFile; fileRef = A1HOSTVID00000000000013 /* SCHostVideoPlane.m */; };
 		50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */; };
 		810A595570CA44DB90DBCA12 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9EAF6FEBF847409AB9CB8706 /* libz.tbd */; };
 		853D2509691E4E29A33B3B47 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 6DC33C57086843E4847844A7 /* AppDelegate.m */; };
@@ -62,6 +65,8 @@
 				1D4EBAD5BA6F4F698478EFA2 /* colors-fs.fs in CopyShaders */,
 				257F56CE53164DC8B22D2E13 /* lamp-vs.vs in CopyShaders */,
 				43D0639593294682A7A9EA72 /* lamp-fs.fs in CopyShaders */,
+				A1HOSTVID00000000000001 /* yuv-quad-vs.vs in CopyShaders */,
+				A1HOSTVID00000000000002 /* yuv-quad-fs.fs in CopyShaders */,
 			);
 			name = CopyShaders;
 			runOnlyForDeploymentPostprocessing = 0;
@@ -445,6 +450,10 @@
 		A1LIVE0000000000000032 /* PushStream.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PushStream.m; sourceTree = "<group>"; };
 		A1UI000000000000000002 /* SCDropdownButton.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCDropdownButton.h; sourceTree = "<group>"; };
 		A1UI000000000000000003 /* SCDropdownButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCDropdownButton.m; sourceTree = "<group>"; };
+		A1HOSTVID00000000000010 /* yuv-quad-vs.vs */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.glsl; path = "yuv-quad-vs.vs"; sourceTree = "<group>"; };
+		A1HOSTVID00000000000011 /* yuv-quad-fs.fs */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.glsl; path = "yuv-quad-fs.fs"; sourceTree = "<group>"; };
+		A1HOSTVID00000000000012 /* SCHostVideoPlane.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCHostVideoPlane.h; sourceTree = "<group>"; };
+		A1HOSTVID00000000000013 /* SCHostVideoPlane.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCHostVideoPlane.m; sourceTree = "<group>"; };
 		A1LIVE000000000000001A /* librtmp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = librtmp.a; sourceTree = "<group>"; };
 		A1LIVE000000000000001B /* libssl.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libssl.a; sourceTree = "<group>"; };
 		A1LIVE000000000000001C /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libcrypto.a; sourceTree = "<group>"; };
@@ -910,6 +919,8 @@
 				DCC7266525AB4FFD9A01E630 /* colors-fs.fs */,
 				D70F778CA631448EAE7F8399 /* lamp-vs.vs */,
 				6A26192DE3D54569B2683689 /* lamp-fs.fs */,
+				A1HOSTVID00000000000010 /* yuv-quad-vs.vs */,
+				A1HOSTVID00000000000011 /* yuv-quad-fs.fs */,
 			);
 			path = shaders;
 			sourceTree = "<group>";
@@ -1459,6 +1470,8 @@
 				7ADF0B22EBF247628A4F3A5F /* SCRenderer.mm */,
 				31739F52BBE543F48776DC84 /* SCRendererData.h */,
 				8674B3AB76BF4D27A049B2B4 /* SCRendererData.cpp */,
+				A1HOSTVID00000000000012 /* SCHostVideoPlane.h */,
+				A1HOSTVID00000000000013 /* SCHostVideoPlane.m */,
 				0C8B75AC12694C65B72D36E0 /* animation.h */,
 				1B4A856417284C869F0E21D1 /* animation.cpp */,
 				FA404718B97B44ADBE24CAE8 /* model.h */,
@@ -1632,6 +1645,7 @@
 				853D2509691E4E29A33B3B47 /* AppDelegate.m in Sources */,
 				E649036B476D4116A5B7D3CB /* GameViewController.mm in Sources */,
 				50DC5E225B3C4E59AAB063DD /* SCRenderer.mm in Sources */,
+				A1HOSTVID00000000000003 /* SCHostVideoPlane.m in Sources */,
 				A1ARKIT0000000000000010 /* SCARTypes.m in Sources */,
 				A1ARKIT0000000000000011 /* SCARKitSession.mm in Sources */,
 				A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */,
