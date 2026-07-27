@@ -95,8 +95,10 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 @property (nonatomic, strong) UIButton *liveButton;
 @property (nonatomic, strong) SCDropdownButton *liveQualityButton;
 @property (nonatomic, strong) SCDropdownButton *liveFPSButton;
+@property (nonatomic, strong) SCDropdownButton *liveSourceButton;
 @property (nonatomic, copy) NSArray<NSNumber *> *liveQualityValues;
 @property (nonatomic, copy) NSArray<NSNumber *> *liveFPSValues;
+@property (nonatomic, copy) NSArray<NSNumber *> *liveSourceValues;
 @property (nonatomic, strong) UILabel *arDumpLabel;
 @property (nonatomic, strong) UIStackView *movePad;
 @property (nonatomic, strong) UIImageView *camPreviewView;
@@ -139,6 +141,7 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 @property (nonatomic, strong) UIView *livePreviewHost;
 @property (nonatomic, assign) PushStreamVideoQuality liveVideoQuality;
 @property (nonatomic, assign) PushStreamFPS liveFPS;
+@property (nonatomic, assign) PushStreamVideoSource liveVideoSource;
 @end
 
 @implementation GameViewController
@@ -445,12 +448,21 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     return 0;
 }
 
+- (NSInteger)indexForLiveSource:(PushStreamVideoSource)s {
+    for (NSInteger i = 0; i < (NSInteger)self.liveSourceValues.count; i++) {
+        if (self.liveSourceValues[i].integerValue == s) return i;
+    }
+    return 0;
+}
+
 - (void)refreshLiveQualityButton {
     self.liveQualityButton.selectedIndex = [self indexForLiveQuality:self.liveVideoQuality];
     self.liveFPSButton.selectedIndex = [self indexForLiveFPS:self.liveFPS];
+    self.liveSourceButton.selectedIndex = [self indexForLiveSource:self.liveVideoSource];
     BOOL enable = !self.pushStream.isStreaming;
     self.liveQualityButton.enabled = enable;
     self.liveFPSButton.enabled = enable;
+    self.liveSourceButton.enabled = enable;
 }
 
 - (void)refreshLiveButton {
@@ -473,6 +485,9 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     }
     self.pushStream.videoQuality = self.liveVideoQuality;
     self.pushStream.fps = self.liveFPS;
+    self.pushStream.videoSource = self.liveVideoSource;
+    self.pushStream.glRenderer = (self.liveVideoSource == PushStreamVideoSourceAvatar)
+        ? self.glView : nil;
     [self.liveButton setTitle:@"Live:…" forState:UIControlStateNormal];
     self.liveButton.enabled = NO;
     self.arDumpLabel.text = @"Connecting RTMP…";
@@ -484,10 +499,11 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         self.liveButton.enabled = YES;
         [self refreshLiveButton];
         if (ok) {
+            NSString *src = [PushStream titleForVideoSource:self.liveVideoSource];
             NSString *vq = [PushStream titleForVideoQuality:self.liveVideoQuality];
             NSString *fq = [PushStream titleForFPS:self.liveFPS];
             self.arDumpLabel.text = [NSString stringWithFormat:
-                @"Live ON Vid:%@ FPS:%@\n%@", vq, fq, message ?: @""];
+                @"Live ON %@ Vid:%@ FPS:%@\n%@", src, vq, fq, message ?: @""];
             [self showLivePreview];
         } else {
             self.arDumpLabel.text = message ?: @"Live FAIL";
@@ -644,8 +660,9 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.liveButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.liveButton];
 
-    self.liveVideoQuality = PushStreamVideoQualityStandard;
+    self.liveVideoQuality = PushStreamVideoQuality720p; // 828×1792 = iPhone 11 19.5:9
     self.liveFPS = PushStreamFPS30;
+    self.liveVideoSource = PushStreamVideoSourceAvatar;
     self.liveQualityValues = @[
         @(PushStreamVideoQualityLow320x240),
         @(PushStreamVideoQualityStandard),
@@ -661,6 +678,10 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         @(PushStreamFPS30),
         @(PushStreamFPS60),
     ];
+    self.liveSourceValues = @[
+        @(PushStreamVideoSourceAvatar),
+        @(PushStreamVideoSourceCamera),
+    ];
     NSMutableArray<NSString *> *vqTitles = [NSMutableArray array];
     for (NSNumber *n in self.liveQualityValues) {
         [vqTitles addObject:[PushStream titleForVideoQuality:(PushStreamVideoQuality)n.integerValue]];
@@ -669,8 +690,22 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     for (NSNumber *n in self.liveFPSValues) {
         [fpsTitles addObject:[PushStream titleForFPS:(PushStreamFPS)n.integerValue]];
     }
+    NSMutableArray<NSString *> *srcTitles = [NSMutableArray array];
+    for (NSNumber *n in self.liveSourceValues) {
+        [srcTitles addObject:[PushStream titleForVideoSource:(PushStreamVideoSource)n.integerValue]];
+    }
 
     __weak typeof(self) weakSelf = self;
+    self.liveSourceButton = [[SCDropdownButton alloc] initWithPrefix:@"Src"
+                                                              options:srcTitles
+                                                        selectedIndex:[self indexForLiveSource:self.liveVideoSource]];
+    self.liveSourceButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || index < 0 || index >= (NSInteger)self.liveSourceValues.count) return;
+        self.liveVideoSource = (PushStreamVideoSource)self.liveSourceValues[index].integerValue;
+    };
+    [self.view addSubview:self.liveSourceButton];
+
     self.liveQualityButton = [[SCDropdownButton alloc] initWithPrefix:@"Vid"
                                                               options:vqTitles
                                                         selectedIndex:[self indexForLiveQuality:self.liveVideoQuality]];
@@ -765,8 +800,12 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.liveButton.topAnchor constraintEqualToAnchor:self.camPreviewButton.bottomAnchor constant:6],
         [self.liveButton.heightAnchor constraintEqualToConstant:36],
 
+        [self.liveSourceButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.liveSourceButton.topAnchor constraintEqualToAnchor:self.liveButton.bottomAnchor constant:6],
+        [self.liveSourceButton.heightAnchor constraintEqualToConstant:36],
+
         [self.liveQualityButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
-        [self.liveQualityButton.topAnchor constraintEqualToAnchor:self.liveButton.bottomAnchor constant:6],
+        [self.liveQualityButton.topAnchor constraintEqualToAnchor:self.liveSourceButton.bottomAnchor constant:6],
         [self.liveQualityButton.heightAnchor constraintEqualToConstant:36],
 
         [self.liveFPSButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],

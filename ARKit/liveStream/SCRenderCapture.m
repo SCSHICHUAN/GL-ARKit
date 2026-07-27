@@ -31,6 +31,7 @@
     self = [super init];
     if (self) {
         _maxFPS = 30;
+        _outputSize = CGSizeZero;
     }
     return self;
 }
@@ -123,7 +124,17 @@
         return;
     }
 
-    if (![self ensurePoolWidth:width height:height]) return;
+    int srcW = width & ~1;
+    int srcH = height & ~1;
+    if (srcW < 2 || srcH < 2) return;
+
+    int outW = srcW;
+    int outH = srcH;
+    if (self.outputSize.width >= 2 && self.outputSize.height >= 2) {
+        outW = ((int)self.outputSize.width) & ~1;
+        outH = ((int)self.outputSize.height) & ~1;
+    }
+    if (![self ensurePoolWidth:outW height:outH]) return;
 
     CVPixelBufferRef pixelBuffer = NULL;
     CVReturn cr = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, self.pixelBufferPool, &pixelBuffer);
@@ -140,26 +151,23 @@
         return;
     }
 
-    // 读到临时行缓冲再竖向翻转写入（GL 原点在左下）
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    size_t rowBytes = (size_t)w * 4;
-    uint8_t *tmp = (uint8_t *)malloc(rowBytes * (size_t)h);
+    size_t srcRowBytes = (size_t)srcW * 4;
+    uint8_t *tmp = (uint8_t *)malloc(srcRowBytes * (size_t)srcH);
     if (!tmp) {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
         CVPixelBufferRelease(pixelBuffer);
         return;
     }
 
-    // iOS GLES：BGRA 可读，直接对接 VT / Media H264Encoder
     while (glGetError() != GL_NO_ERROR) {}
-    glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, tmp);
+    glReadPixels(0, 0, srcW, srcH, GL_BGRA, GL_UNSIGNED_BYTE, tmp);
     GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
-        // 少数机型回退 RGBA 再 swizzle
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
-        for (int y = 0; y < h; ++y) {
-            uint8_t *row = tmp + (size_t)y * rowBytes;
-            for (int x = 0; x < w; ++x) {
+        glReadPixels(0, 0, srcW, srcH, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
+        for (int y = 0; y < srcH; ++y) {
+            uint8_t *row = tmp + (size_t)y * srcRowBytes;
+            for (int x = 0; x < srcW; ++x) {
                 uint8_t *p = row + (size_t)x * 4;
                 uint8_t r = p[0], b = p[2];
                 p[0] = b;
@@ -168,10 +176,28 @@
         }
     }
 
-    for (int y = 0; y < h; ++y) {
-        const uint8_t *src = tmp + (size_t)(h - 1 - y) * rowBytes;
-        uint8_t *dst = base + (size_t)y * bpr;
-        memcpy(dst, src, rowBytes);
+    // GL 原点左下 → 竖翻；等比缩放到 output（letterbox），避免比例不一致被拉胖
+    memset(base, 0, bpr * (size_t)h);
+    float scale = MIN((float)w / (float)srcW, (float)h / (float)srcH);
+    int dw = MAX(2, ((int)(srcW * scale)) & ~1);
+    int dh = MAX(2, ((int)(srcH * scale)) & ~1);
+    int ox = (w - dw) / 2;
+    int oy = (h - dh) / 2;
+    for (int y = 0; y < dh; ++y) {
+        int sy = (srcH - 1) - (int)((int64_t)y * srcH / dh);
+        if (sy < 0) sy = 0;
+        if (sy >= srcH) sy = srcH - 1;
+        const uint8_t *srcRow = tmp + (size_t)sy * srcRowBytes;
+        uint8_t *dst = base + (size_t)(oy + y) * bpr + (size_t)ox * 4;
+        if (dw == srcW) {
+            memcpy(dst, srcRow, srcRowBytes);
+        } else {
+            for (int x = 0; x < dw; ++x) {
+                int sx = (int)((int64_t)x * srcW / dw);
+                if (sx >= srcW) sx = srcW - 1;
+                memcpy(dst + (size_t)x * 4, srcRow + (size_t)sx * 4, 4);
+            }
+        }
     }
     free(tmp);
     CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
@@ -209,7 +235,7 @@
     [self.delegate didOutputSampleBuffer:sampleBuffer];
     static int sCap = 0;
     if ((++sCap % 30) == 1) {
-        NSLog(@"[SCRenderCapture] → delegate didOutput #%d %dx%d", sCap, w, h);
+        NSLog(@"[SCRenderCapture] → delegate didOutput #%d %dx%d (fb %dx%d)", sCap, w, h, srcW, srcH);
     }
     CFRelease(sampleBuffer);
 }

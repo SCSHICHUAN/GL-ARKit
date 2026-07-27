@@ -21,8 +21,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, weak, nullable) id<SCRenderCaptureDelegate> delegate;
 
-/// 限帧，默认 30；编码器尺寸应对齐 `captureSize`
+/// 限帧，默认 30；编码器尺寸应对齐 `captureSize`（或 `outputSize`）
 @property (nonatomic, assign) NSInteger maxFPS;
+
+/// 若非 CGSizeZero，则缩放到该尺寸再输出（应对齐 H264Encoder）；默认全屏 FBO 尺寸
+@property (nonatomic, assign) CGSize outputSize;
 
 /// 最近一次成功抓到的像素尺寸（偶数对齐，供 H264Encoder initWithVideSize:）
 @property (nonatomic, readonly) CGSize captureSize;

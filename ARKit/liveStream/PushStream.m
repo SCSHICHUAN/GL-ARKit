@@ -1,12 +1,14 @@
 /*
   PushStream.m
-  Media 推流：连 RTMP → 开采集/编码。
+  推流：Cam（VideoCapture）或 Avatar（SCRenderCapture ← SCRenderer）。
 */
 
 #import "PushStream.h"
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import "VideoCapture.h"
+#import "SCRenderCapture.h"
+#import "SCRenderer.h"
 #import "H264Encoder.h"
 #import "AudioCapture.h"
 #import "AACEncoder.h"
@@ -16,12 +18,14 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 
 @interface PushStream () <
     VideoCaptureDelegate,
+    SCRenderCaptureDelegate,
     H264EncoderDelegate,
     AudioCaptureDelegate,
     AACEncoderDelegate
 >
 
 @property (strong, nonatomic) VideoCapture *videoCapture;
+@property (strong, nonatomic) SCRenderCapture *renderCapture;
 @property (strong, nonatomic) H264Encoder *h264encoder;
 @property (nonatomic, strong) AudioCapture *audioCapture;
 @property (nonatomic, strong) AACEncoder *aacEncoder;
@@ -40,6 +44,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
     if (self) {
         _videoQuality = PushStreamVideoQualityStandard;
         _fps = PushStreamFPS30;
+        _videoSource = PushStreamVideoSourceAvatar;
         _rtmpURL = [kDefaultRTMPURL copy];
     }
     return self;
@@ -47,13 +52,13 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 
 + (NSString *)titleForVideoQuality:(PushStreamVideoQuality)q {
     switch (q) {
-        case PushStreamVideoQualityLow320x240: return @"240×320";
-        case PushStreamVideoQuality480p:       return @"480×640";
-        case PushStreamVideoQuality720p:       return @"720×1280";
-        case PushStreamVideoQuality1080p:      return @"1080×1920";
-        case PushStreamVideoQuality2K:         return @"1440×2560";
+        case PushStreamVideoQualityLow320x240: return @"360×780";
+        case PushStreamVideoQuality480p:       return @"720×1560";
+        case PushStreamVideoQuality720p:       return @"828×1792";
+        case PushStreamVideoQuality1080p:      return @"1080×2340";
+        case PushStreamVideoQuality2K:         return @"1440×3120";
         case PushStreamVideoQualityStandard:
-        default: return @"288×352";
+        default: return @"540×1170";
     }
 }
 
@@ -70,6 +75,14 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 
 + (NSString *)titleForFPS:(PushStreamFPS)f {
     return [NSString stringWithFormat:@"%d", [self fpsValue:f]];
+}
+
++ (NSString *)titleForVideoSource:(PushStreamVideoSource)s {
+    switch (s) {
+        case PushStreamVideoSourceAvatar: return @"Avatar";
+        case PushStreamVideoSourceCamera:
+        default: return @"Cam";
+    }
 }
 
 + (PushStreamFPS)nextFPS:(PushStreamFPS)f {
@@ -96,20 +109,21 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 }
 
 - (CGSize)encodeSize {
+    // iPhone 11 = 828×1792 → 19.5:9；宽高均偶数，便于 H.264
     switch (self.videoQuality) {
         case PushStreamVideoQualityLow320x240:
-            return CGSizeMake(240, 320);
+            return CGSizeMake(360, 780);
         case PushStreamVideoQuality480p:
-            return CGSizeMake(480, 640);
+            return CGSizeMake(720, 1560);
         case PushStreamVideoQuality720p:
-            return CGSizeMake(720, 1280);
+            return CGSizeMake(828, 1792);
         case PushStreamVideoQuality1080p:
-            return CGSizeMake(1080, 1920);
+            return CGSizeMake(1080, 2340);
         case PushStreamVideoQuality2K:
-            return CGSizeMake(1440, 2560);
+            return CGSizeMake(1440, 3120);
         case PushStreamVideoQualityStandard:
         default:
-            return CGSizeMake(288, 352);
+            return CGSizeMake(540, 1170);
     }
 }
 
@@ -134,24 +148,28 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
 - (int)bitRateForQuality:(PushStreamVideoQuality)q {
     switch (q) {
         case PushStreamVideoQualityLow320x240:
-            return 1000000;
+            return 1500000;
         case PushStreamVideoQuality480p:
-            return 3000000;
-        case PushStreamVideoQuality720p:
             return 5000000;
+        case PushStreamVideoQuality720p:
+            return 6000000;
         case PushStreamVideoQuality1080p:
             return 8000000;
         case PushStreamVideoQuality2K:
             return 12000000;
         case PushStreamVideoQualityStandard:
         default:
-            return 4000000;
+            return 3000000;
     }
 }
 
 - (void)startWithCompletion:(void (^)(BOOL, NSString * _Nullable))completion {
     if (self.streaming || self.starting) {
         if (completion) completion(self.streaming, self.streaming ? @"already" : @"busy");
+        return;
+    }
+    if (self.videoSource == PushStreamVideoSourceAvatar && !self.glRenderer) {
+        if (completion) completion(NO, @"Avatar 模式需要 glRenderer");
         return;
     }
     self.starting = YES;
@@ -166,32 +184,53 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
                 if (completion) completion(NO, @"RTMP 连接失败");
                 return;
             }
-            if (completion) completion(YES, self.rtmpURL);
+            NSString *src = [PushStream titleForVideoSource:self.videoSource];
+            if (completion) {
+                completion(YES, [NSString stringWithFormat:@"%@ · %@", src, self.rtmpURL]);
+            }
         });
     });
 }
 
 - (BOOL)connectRTMPAndStartCapture {
-    // 启动顺序与 Media ViewController 一致：采集/编码先起，最后连 RTMP
-    NSString *preset = [self capturePresetForQuality:self.videoQuality];
     CGSize enc = [self encodeSize];
     int br = [self bitRateForQuality:self.videoQuality];
     self.activeFPS = [PushStream fpsValue:self.fps];
     self.lastEncodeTime = 0;
 
+    __block BOOL videoOK = YES;
     dispatch_sync(dispatch_get_main_queue(), ^{
-        self.videoCapture = [[VideoCapture alloc] initWithSessionPreset:preset];
-        self.videoCapture.delegate = self;
-        [self.videoCapture startVideoCollect];
-        AVCaptureVideoPreviewLayer *previewlayer =
-            [[AVCaptureVideoPreviewLayer alloc] initWithSession:self.videoCapture.captureSeccion];
-        previewlayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
-        self.previewLayer = previewlayer;
+        if (self.videoSource == PushStreamVideoSourceAvatar) {
+            if (!self.glRenderer) {
+                videoOK = NO;
+                return;
+            }
+            self.renderCapture = [[SCRenderCapture alloc] init];
+            self.renderCapture.delegate = self;
+            self.renderCapture.maxFPS = self.activeFPS;
+            self.renderCapture.outputSize = enc;
+            [self.renderCapture attachToRenderer:self.glRenderer];
+            [self.renderCapture startCapture];
+            self.previewLayer = nil;
+            self.videoCapture = nil;
+        } else {
+            NSString *preset = [self capturePresetForQuality:self.videoQuality];
+            self.videoCapture = [[VideoCapture alloc] initWithSessionPreset:preset];
+            self.videoCapture.delegate = self;
+            [self.videoCapture startVideoCollect];
+            AVCaptureVideoPreviewLayer *previewlayer =
+                [[AVCaptureVideoPreviewLayer alloc] initWithSession:self.videoCapture.captureSeccion];
+            previewlayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
+            self.previewLayer = previewlayer;
+            self.renderCapture = nil;
+        }
     });
+    if (!videoOK) return NO;
 
     self.h264encoder = [[H264Encoder alloc] initWithVideSize:enc bitRate:br fps:self.activeFPS];
     self.h264encoder.delegate = self;
-    NSLog(@"[PushStream] vid=%@ encode=%.0fx%.0f %dkbps fps=%d",
+    NSLog(@"[PushStream] src=%@ vid=%@ encode=%.0fx%.0f %dkbps fps=%d",
+          [PushStream titleForVideoSource:self.videoSource],
           [PushStream titleForVideoQuality:self.videoQuality],
           enc.width, enc.height, br / 1000, self.activeFPS);
 
@@ -199,7 +238,6 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
     self.audioCapture.delegate = self;
     [self.audioCapture startCapture];
 
-    // 与 Media 一致：44100Hz mono，不强制码率
     self.aacEncoder = [[AACEncoder alloc] initWithSampleRate:44100 channels:1];
     self.aacEncoder.delegate = self;
 
@@ -208,16 +246,7 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
     self.rtpStreamer = [[RTMPStreamer alloc] initWithRTMPURL:url];
     if (![self.rtpStreamer startStreaming]) {
         NSLog(@"推流开始失败");
-        [self.videoCapture stopVideoCollect];
-        [self.h264encoder stopEncoding];
-        [self.audioCapture stopCapture];
-        [self.aacEncoder stopEncoding];
-        self.videoCapture = nil;
-        self.h264encoder = nil;
-        self.audioCapture = nil;
-        self.aacEncoder = nil;
-        self.rtpStreamer = nil;
-        self.previewLayer = nil;
+        [self tearDownCaptureEncoders];
         return NO;
     }
     NSLog(@"推流开始成功");
@@ -226,32 +255,68 @@ static NSString * const kDefaultRTMPURL = @"rtmp://192.168.71.92:1935/live/tests
     return YES;
 }
 
-- (void)stop {
-    self.starting = NO;
-    self.streaming = NO;
-
-    [self.videoCapture stopVideoCollect];
+- (void)tearDownCaptureEncoders {
+    dispatch_block_t ui = ^{
+        [self.renderCapture stopCapture];
+        [self.renderCapture detachFromRenderer];
+        [self.videoCapture stopVideoCollect];
+        self.renderCapture = nil;
+        self.videoCapture = nil;
+        self.previewLayer = nil;
+    };
+    if ([NSThread isMainThread]) {
+        ui();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ui);
+    }
     [self.h264encoder stopEncoding];
     [self.audioCapture stopCapture];
     [self.aacEncoder stopEncoding];
-    [self.rtpStreamer stopStreaming];
-
-    self.videoCapture = nil;
     self.h264encoder = nil;
     self.audioCapture = nil;
     self.aacEncoder = nil;
     self.rtpStreamer = nil;
-    self.previewLayer = nil;
+}
+
+- (void)stop {
+    self.starting = NO;
+    self.streaming = NO;
+
+    dispatch_block_t cleanup = ^{
+        [self.renderCapture stopCapture];
+        [self.renderCapture detachFromRenderer];
+        [self.videoCapture stopVideoCollect];
+        [self.h264encoder stopEncoding];
+        [self.audioCapture stopCapture];
+        [self.aacEncoder stopEncoding];
+        [self.rtpStreamer stopStreaming];
+
+        self.renderCapture = nil;
+        self.videoCapture = nil;
+        self.h264encoder = nil;
+        self.audioCapture = nil;
+        self.aacEncoder = nil;
+        self.rtpStreamer = nil;
+        self.previewLayer = nil;
+    };
+
+    if ([NSThread isMainThread]) {
+        cleanup();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), cleanup);
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [UIApplication sharedApplication].idleTimerDisabled = NO;
     });
 }
 
-#pragma mark - VideoCollectDelegate
+#pragma mark - Video / GL → H264
+
 - (void)didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer {
-    // Media 默认不限帧；仅当用户选了更低 FPS 时才节流
-    if (self.activeFPS > 0 && self.activeFPS < 30) {
+    // Avatar：SCRenderCapture 已按 maxFPS 限帧；Cam：仅低于 30 时节流
+    if (self.videoSource == PushStreamVideoSourceCamera &&
+        self.activeFPS > 0 && self.activeFPS < 30) {
         CFTimeInterval now = CACurrentMediaTime();
         CFTimeInterval minInterval = 1.0 / MAX(self.activeFPS, 1);
         if (self.lastEncodeTime > 0 && (now - self.lastEncodeTime) < minInterval) {
