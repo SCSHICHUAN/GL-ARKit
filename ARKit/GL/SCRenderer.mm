@@ -4,6 +4,7 @@
 */
 
 #import "SCRenderer.h"
+#import "SCRenderCapture.h"
 #import <QuartzCore/QuartzCore.h>
 #import <OpenGLES/ES3/gl.h>
 #import <OpenGLES/ES3/glext.h>
@@ -158,6 +159,9 @@
     glBindFramebuffer(GL_FRAMEBUFFER, self.defaultFramebuffer);
     glViewport(0, 0, self.backingWidth, self.backingHeight);
     self.data->render();
+
+    // 直播：present 前读回（FBO 仍绑定）
+    [self.renderCapture onFramebufferReadyWidth:self.backingWidth height:self.backingHeight];
 
     glBindRenderbuffer(GL_RENDERBUFFER, self.colorRenderbuffer);
     [self.context presentRenderbuffer:GL_RENDERBUFFER];

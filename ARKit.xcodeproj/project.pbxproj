@@ -24,6 +24,22 @@
 		A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT0000000000000008 /* SCARFaceProjector.m */; };
 		C51A637EC46C4B53AE5F76B7 /* SCARUpperBodyProjector.m in Sources */ = {isa = PBXBuildFile; fileRef = 8CCA5957B7DE4D9DA75890BA /* SCARUpperBodyProjector.m */; };
 		A1ARKIT0000000000000015 /* SCARPixelBufferCopy.m in Sources */ = {isa = PBXBuildFile; fileRef = A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */; };
+		A1MEDIA0000000000000003 /* SCRenderCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1MEDIA0000000000000002 /* SCRenderCapture.m */; };
+		A1LIVE0000000000000002 /* H264Encoder.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000011 /* H264Encoder.m */; };
+		A1LIVE0000000000000003 /* AACEncoder.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000013 /* AACEncoder.m */; };
+		A1LIVE0000000000000004 /* AudioCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000015 /* AudioCapture.m */; };
+		A1LIVE0000000000000005 /* VideoCapture.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000017 /* VideoCapture.m */; };
+		A1LIVE0000000000000006 /* RTMPStreamer.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000019 /* RTMPStreamer.m */; };
+		A1LIVE0000000000000030 /* PushStream.m in Sources */ = {isa = PBXBuildFile; fileRef = A1LIVE0000000000000032 /* PushStream.m */; };
+		A1UI000000000000000001 /* SCDropdownButton.m in Sources */ = {isa = PBXBuildFile; fileRef = A1UI000000000000000003 /* SCDropdownButton.m */; };
+		A1LIVE0000000000000007 /* librtmp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001A /* librtmp.a */; };
+		A1LIVE0000000000000008 /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001B /* libssl.a */; };
+		A1LIVE0000000000000009 /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001C /* libcrypto.a */; };
+		A1LIVE000000000000000A /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001D /* VideoToolbox.framework */; };
+		A1LIVE000000000000000B /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001E /* AudioToolbox.framework */; };
+		A1LIVE000000000000000C /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1LIVE000000000000001F /* Security.framework */; };
+		A1MEDIA0000000000000007 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1MEDIA0000000000000005 /* CoreVideo.framework */; };
+		A1MEDIA0000000000000008 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1MEDIA0000000000000006 /* CoreMedia.framework */; };
 		73A24BDA98B04DE7918C783A /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210E7B73262B484FAB21D6DA /* Vision.framework */; };
 		AABEFF57A9AE45078658E784 /* animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1B4A856417284C869F0E21D1 /* animation.cpp */; };
 		AB60DA67839640F9929569F1 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = ABB4419E7FF640C7A7F76DA3 /* main.m */; };
@@ -413,6 +429,31 @@
 		8CCA5957B7DE4D9DA75890BA /* SCARUpperBodyProjector.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARUpperBodyProjector.m; sourceTree = "<group>"; };
 		A1ARKIT000000000000000A /* SCARPixelBufferCopy.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCARPixelBufferCopy.h; sourceTree = "<group>"; };
 		A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCARPixelBufferCopy.m; sourceTree = "<group>"; };
+		A1MEDIA0000000000000001 /* SCRenderCapture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCRenderCapture.h; sourceTree = "<group>"; };
+		A1MEDIA0000000000000002 /* SCRenderCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCRenderCapture.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000010 /* H264Encoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = H264Encoder.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000011 /* H264Encoder.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = H264Encoder.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000012 /* AACEncoder.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AACEncoder.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000013 /* AACEncoder.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AACEncoder.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000014 /* AudioCapture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AudioCapture.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000015 /* AudioCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AudioCapture.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000016 /* VideoCapture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VideoCapture.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000017 /* VideoCapture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = VideoCapture.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000018 /* RTMPStreamer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RTMPStreamer.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000019 /* RTMPStreamer.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RTMPStreamer.m; sourceTree = "<group>"; };
+		A1LIVE0000000000000031 /* PushStream.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PushStream.h; sourceTree = "<group>"; };
+		A1LIVE0000000000000032 /* PushStream.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PushStream.m; sourceTree = "<group>"; };
+		A1UI000000000000000002 /* SCDropdownButton.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SCDropdownButton.h; sourceTree = "<group>"; };
+		A1UI000000000000000003 /* SCDropdownButton.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SCDropdownButton.m; sourceTree = "<group>"; };
+		A1LIVE000000000000001A /* librtmp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = librtmp.a; sourceTree = "<group>"; };
+		A1LIVE000000000000001B /* libssl.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libssl.a; sourceTree = "<group>"; };
+		A1LIVE000000000000001C /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libcrypto.a; sourceTree = "<group>"; };
+		A1LIVE000000000000001D /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		A1LIVE000000000000001E /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		A1LIVE000000000000001F /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A1LIVE0000000000000021 /* include */ = {isa = PBXFileReference; lastKnownFileType = folder; path = include; sourceTree = "<group>"; };
+		A1MEDIA0000000000000005 /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
+		A1MEDIA0000000000000006 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		210E7B73262B484FAB21D6DA /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
 		A1F79938864F4570805DEFEE /* type_vec1.inl */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = type_vec1.inl; sourceTree = "<group>"; };
 		A29164DF5D7F4D1DB3F792B9 /* color4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = color4.h; sourceTree = "<group>"; };
@@ -636,6 +677,11 @@
 				A1ARKIT0000000000000012 /* ARKit.framework in Frameworks */,
 				A1ARKIT0000000000000013 /* AVFoundation.framework in Frameworks */,
 				73A24BDA98B04DE7918C783A /* Vision.framework in Frameworks */,
+				A1MEDIA0000000000000007 /* CoreVideo.framework in Frameworks */,
+				A1MEDIA0000000000000008 /* CoreMedia.framework in Frameworks */,
+				A1LIVE000000000000000A /* VideoToolbox.framework in Frameworks */,
+				A1LIVE000000000000000B /* AudioToolbox.framework in Frameworks */,
+				A1LIVE000000000000000C /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -902,6 +948,8 @@
 				F6D8637530149DAE00362330 /* ocpp */,
 				F6D8637430149D4B00362330 /* GL */,
 				A1ARKIT0000000000000020 /* arkit */,
+				A1LIVE0000000000000020 /* liveStream */,
+				A1UI000000000000000010 /* ui */,
 				133BF7DA08574D7C81E889FC /* other */,
 				4DC45F3A999A46C68D9EFA47 /* assimp */,
 				8B79B6C380BC4CF69F003FA5 /* libs */,
@@ -922,6 +970,11 @@
 				A1ARKIT0000000000000005 /* ARKit.framework */,
 				A1ARKIT0000000000000006 /* AVFoundation.framework */,
 				210E7B73262B484FAB21D6DA /* Vision.framework */,
+				A1MEDIA0000000000000005 /* CoreVideo.framework */,
+				A1MEDIA0000000000000006 /* CoreMedia.framework */,
+				A1LIVE000000000000001D /* VideoToolbox.framework */,
+				A1LIVE000000000000001E /* AudioToolbox.framework */,
+				A1LIVE000000000000001F /* Security.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -949,6 +1002,56 @@
 				A1ARKIT000000000000000B /* SCARPixelBufferCopy.m */,
 			);
 			path = arkit;
+			sourceTree = "<group>";
+		};
+		A1LIVE0000000000000020 /* liveStream */ = {
+			isa = PBXGroup;
+			children = (
+				A1MEDIA0000000000000001 /* SCRenderCapture.h */,
+				A1MEDIA0000000000000002 /* SCRenderCapture.m */,
+				A1LIVE0000000000000010 /* H264Encoder.h */,
+				A1LIVE0000000000000011 /* H264Encoder.m */,
+				A1LIVE0000000000000012 /* AACEncoder.h */,
+				A1LIVE0000000000000013 /* AACEncoder.m */,
+				A1LIVE0000000000000014 /* AudioCapture.h */,
+				A1LIVE0000000000000015 /* AudioCapture.m */,
+				A1LIVE0000000000000016 /* VideoCapture.h */,
+				A1LIVE0000000000000017 /* VideoCapture.m */,
+				A1LIVE0000000000000018 /* RTMPStreamer.h */,
+				A1LIVE0000000000000019 /* RTMPStreamer.m */,
+				A1LIVE0000000000000031 /* PushStream.h */,
+				A1LIVE0000000000000032 /* PushStream.m */,
+				A1LIVE0000000000000022 /* rtmp */,
+			);
+			path = liveStream;
+			sourceTree = "<group>";
+		};
+		A1UI000000000000000010 /* ui */ = {
+			isa = PBXGroup;
+			children = (
+				A1UI000000000000000002 /* SCDropdownButton.h */,
+				A1UI000000000000000003 /* SCDropdownButton.m */,
+			);
+			path = ui;
+			sourceTree = "<group>";
+		};
+		A1LIVE0000000000000022 /* rtmp */ = {
+			isa = PBXGroup;
+			children = (
+				A1LIVE0000000000000021 /* include */,
+				A1LIVE0000000000000023 /* lib */,
+			);
+			path = rtmp;
+			sourceTree = "<group>";
+		};
+		A1LIVE0000000000000023 /* lib */ = {
+			isa = PBXGroup;
+			children = (
+				A1LIVE000000000000001A /* librtmp.a */,
+				A1LIVE000000000000001B /* libssl.a */,
+				A1LIVE000000000000001C /* libcrypto.a */,
+			);
+			path = lib;
 			sourceTree = "<group>";
 		};
 		A6E62A3C4E044080AC92F143 /* ext */ = {
@@ -1534,6 +1637,14 @@
 				A1ARKIT0000000000000014 /* SCARFaceProjector.m in Sources */,
 				C51A637EC46C4B53AE5F76B7 /* SCARUpperBodyProjector.m in Sources */,
 				A1ARKIT0000000000000015 /* SCARPixelBufferCopy.m in Sources */,
+				A1MEDIA0000000000000003 /* SCRenderCapture.m in Sources */,
+				A1LIVE0000000000000002 /* H264Encoder.m in Sources */,
+				A1LIVE0000000000000003 /* AACEncoder.m in Sources */,
+				A1LIVE0000000000000004 /* AudioCapture.m in Sources */,
+				A1LIVE0000000000000005 /* VideoCapture.m in Sources */,
+				A1LIVE0000000000000006 /* RTMPStreamer.m in Sources */,
+				A1LIVE0000000000000030 /* PushStream.m in Sources */,
+				A1UI000000000000000001 /* SCDropdownButton.m in Sources */,
 				17D1891E024A4B69B00F95F7 /* glm.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1592,6 +1703,10 @@
 					"$(PROJECT_DIR)/ARKit",
 					"$(PROJECT_DIR)/ARKit/GL",
 					"$(PROJECT_DIR)/ARKit/arkit",
+					"$(PROJECT_DIR)/ARKit/liveStream",
+					"$(PROJECT_DIR)/ARKit/ui",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/include",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/include/librtmp",
 					"$(PROJECT_DIR)/ARKit/libs",
 					"$(PROJECT_DIR)/ARKit/assimp/include",
 				);
@@ -1604,11 +1719,20 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit/assimp/ios/$(PLATFORM_NAME)",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/lib",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lassimp",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-ObjC",
+					"-lassimp",
+					"-lrtmp",
+					"-lssl",
+					"-lcrypto",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.stan.ARKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1629,6 +1753,10 @@
 					"$(PROJECT_DIR)/ARKit",
 					"$(PROJECT_DIR)/ARKit/GL",
 					"$(PROJECT_DIR)/ARKit/arkit",
+					"$(PROJECT_DIR)/ARKit/liveStream",
+					"$(PROJECT_DIR)/ARKit/ui",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/include",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/include/librtmp",
 					"$(PROJECT_DIR)/ARKit/libs",
 					"$(PROJECT_DIR)/ARKit/assimp/include",
 				);
@@ -1641,11 +1769,20 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/ARKit/assimp/ios/$(PLATFORM_NAME)",
+					"$(PROJECT_DIR)/ARKit/liveStream/rtmp/lib",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lassimp",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-ObjC",
+					"-lassimp",
+					"-lrtmp",
+					"-lssl",
+					"-lcrypto",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.stan.ARKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";

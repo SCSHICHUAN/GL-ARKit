@@ -9,6 +9,8 @@
 #import "SCARFaceProjector.h"
 #import "SCARUpperBodyProjector.h"
 #import "SCARPixelBufferCopy.h"
+#import "PushStream.h"
+#import "SCDropdownButton.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreImage/CoreImage.h>
 #import <math.h>
@@ -90,6 +92,11 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 @property (nonatomic, strong) UIButton *pauseButton;
 @property (nonatomic, strong) UIButton *arModeButton;
 @property (nonatomic, strong) UIButton *camPreviewButton;
+@property (nonatomic, strong) UIButton *liveButton;
+@property (nonatomic, strong) SCDropdownButton *liveQualityButton;
+@property (nonatomic, strong) SCDropdownButton *liveFPSButton;
+@property (nonatomic, copy) NSArray<NSNumber *> *liveQualityValues;
+@property (nonatomic, copy) NSArray<NSNumber *> *liveFPSValues;
 @property (nonatomic, strong) UILabel *arDumpLabel;
 @property (nonatomic, strong) UIStackView *movePad;
 @property (nonatomic, strong) UIImageView *camPreviewView;
@@ -127,6 +134,11 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 /// 与屏幕刷新同拍：lean + 相机预览
 @property (nonatomic, strong) CADisplayLink *displayLink;
 @property (nonatomic, assign) NSInteger lastLeanBoneCount;
+/// Live：PushStream = Media ViewController 完整拷贝
+@property (nonatomic, strong) PushStream *pushStream;
+@property (nonatomic, strong) UIView *livePreviewHost;
+@property (nonatomic, assign) PushStreamVideoQuality liveVideoQuality;
+@property (nonatomic, assign) PushStreamFPS liveFPS;
 @end
 
 @implementation GameViewController
@@ -149,6 +161,7 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
+    [self stopLiveStreaming];
     [self.displayLink invalidate];
     self.displayLink = nil;
     [self tearDownCamPreviewPipeline];
@@ -416,6 +429,105 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.movePadLeadingToPreview.active = on;
 }
 
+#pragma mark - Live（Media ViewController → PushStream + 开关）
+
+- (NSInteger)indexForLiveQuality:(PushStreamVideoQuality)q {
+    for (NSInteger i = 0; i < (NSInteger)self.liveQualityValues.count; i++) {
+        if (self.liveQualityValues[i].integerValue == q) return i;
+    }
+    return 0;
+}
+
+- (NSInteger)indexForLiveFPS:(PushStreamFPS)f {
+    for (NSInteger i = 0; i < (NSInteger)self.liveFPSValues.count; i++) {
+        if (self.liveFPSValues[i].integerValue == f) return i;
+    }
+    return 0;
+}
+
+- (void)refreshLiveQualityButton {
+    self.liveQualityButton.selectedIndex = [self indexForLiveQuality:self.liveVideoQuality];
+    self.liveFPSButton.selectedIndex = [self indexForLiveFPS:self.liveFPS];
+    BOOL enable = !self.pushStream.isStreaming;
+    self.liveQualityButton.enabled = enable;
+    self.liveFPSButton.enabled = enable;
+}
+
+- (void)refreshLiveButton {
+    BOOL on = self.pushStream.isStreaming;
+    [self.liveButton setTitle:(on ? @"Live:On" : @"Live:Off") forState:UIControlStateNormal];
+    [self refreshLiveQualityButton];
+}
+
+- (void)toggleLive {
+    if (self.pushStream.isStreaming) {
+        [self stopLiveStreaming];
+    } else {
+        [self startLiveStreaming];
+    }
+}
+
+- (void)startLiveStreaming {
+    if (!self.pushStream) {
+        self.pushStream = [[PushStream alloc] init];
+    }
+    self.pushStream.videoQuality = self.liveVideoQuality;
+    self.pushStream.fps = self.liveFPS;
+    [self.liveButton setTitle:@"Live:…" forState:UIControlStateNormal];
+    self.liveButton.enabled = NO;
+    self.arDumpLabel.text = @"Connecting RTMP…";
+
+    __weak typeof(self) weakSelf = self;
+    [self.pushStream startWithCompletion:^(BOOL ok, NSString *message) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return;
+        self.liveButton.enabled = YES;
+        [self refreshLiveButton];
+        if (ok) {
+            NSString *vq = [PushStream titleForVideoQuality:self.liveVideoQuality];
+            NSString *fq = [PushStream titleForFPS:self.liveFPS];
+            self.arDumpLabel.text = [NSString stringWithFormat:
+                @"Live ON Vid:%@ FPS:%@\n%@", vq, fq, message ?: @""];
+            [self showLivePreview];
+        } else {
+            self.arDumpLabel.text = message ?: @"Live FAIL";
+            self.pushStream = nil;
+            [self hideLivePreview];
+            [self refreshLiveButton];
+        }
+    }];
+}
+
+- (void)stopLiveStreaming {
+    [self.pushStream stop];
+    self.pushStream = nil;
+    [self hideLivePreview];
+    [self refreshLiveButton];
+    self.arDumpLabel.text = @"Live Off";
+}
+
+- (void)showLivePreview {
+    if (!self.pushStream.previewLayer) return;
+    if (!self.livePreviewHost) {
+        self.livePreviewHost = [[UIView alloc] initWithFrame:CGRectMake(8, 120, 108, 144)];
+        self.livePreviewHost.clipsToBounds = YES;
+        self.livePreviewHost.layer.cornerRadius = 8;
+        self.livePreviewHost.layer.borderWidth = 1;
+        self.livePreviewHost.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.5].CGColor;
+        [self.view addSubview:self.livePreviewHost];
+    }
+    AVCaptureVideoPreviewLayer *pl = self.pushStream.previewLayer;
+    pl.frame = self.livePreviewHost.bounds;
+    [self.livePreviewHost.layer addSublayer:pl];
+    self.livePreviewHost.hidden = NO;
+    [self.view bringSubviewToFront:self.livePreviewHost];
+}
+
+- (void)hideLivePreview {
+    [self.pushStream.previewLayer removeFromSuperlayer];
+    self.livePreviewHost.hidden = YES;
+}
+
 /// 与屏幕刷新同拍：上体 lean + 相机预览
 - (void)tickDisplayLink:(CADisplayLink *)link {
     (void)link;
@@ -528,6 +640,57 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.camPreviewButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.camPreviewButton];
 
+    self.liveButton = [self makeButton:@"Live:Off" action:@selector(toggleLive)];
+    self.liveButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.liveButton];
+
+    self.liveVideoQuality = PushStreamVideoQualityStandard;
+    self.liveFPS = PushStreamFPS30;
+    self.liveQualityValues = @[
+        @(PushStreamVideoQualityLow320x240),
+        @(PushStreamVideoQualityStandard),
+        @(PushStreamVideoQuality480p),
+        @(PushStreamVideoQuality720p),
+        @(PushStreamVideoQuality1080p),
+        @(PushStreamVideoQuality2K),
+    ];
+    self.liveFPSValues = @[
+        @(PushStreamFPS5),
+        @(PushStreamFPS10),
+        @(PushStreamFPS24),
+        @(PushStreamFPS30),
+        @(PushStreamFPS60),
+    ];
+    NSMutableArray<NSString *> *vqTitles = [NSMutableArray array];
+    for (NSNumber *n in self.liveQualityValues) {
+        [vqTitles addObject:[PushStream titleForVideoQuality:(PushStreamVideoQuality)n.integerValue]];
+    }
+    NSMutableArray<NSString *> *fpsTitles = [NSMutableArray array];
+    for (NSNumber *n in self.liveFPSValues) {
+        [fpsTitles addObject:[PushStream titleForFPS:(PushStreamFPS)n.integerValue]];
+    }
+
+    __weak typeof(self) weakSelf = self;
+    self.liveQualityButton = [[SCDropdownButton alloc] initWithPrefix:@"Vid"
+                                                              options:vqTitles
+                                                        selectedIndex:[self indexForLiveQuality:self.liveVideoQuality]];
+    self.liveQualityButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || index < 0 || index >= (NSInteger)self.liveQualityValues.count) return;
+        self.liveVideoQuality = (PushStreamVideoQuality)self.liveQualityValues[index].integerValue;
+    };
+    [self.view addSubview:self.liveQualityButton];
+
+    self.liveFPSButton = [[SCDropdownButton alloc] initWithPrefix:@"FPS"
+                                                          options:fpsTitles
+                                                    selectedIndex:[self indexForLiveFPS:self.liveFPS]];
+    self.liveFPSButton.selectionHandler = ^(NSInteger index, __unused NSString *title) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || index < 0 || index >= (NSInteger)self.liveFPSValues.count) return;
+        self.liveFPS = (PushStreamFPS)self.liveFPSValues[index].integerValue;
+    };
+    [self.view addSubview:self.liveFPSButton];
+
     self.camPreviewView = [[UIImageView alloc] init];
     self.camPreviewView.translatesAutoresizingMaskIntoConstraints = NO;
     self.camPreviewView.contentMode = UIViewContentModeScaleAspectFill;
@@ -598,6 +761,18 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.camPreviewButton.topAnchor constraintEqualToAnchor:self.arModeButton.bottomAnchor constant:6],
         [self.camPreviewButton.heightAnchor constraintEqualToConstant:36],
 
+        [self.liveButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.liveButton.topAnchor constraintEqualToAnchor:self.camPreviewButton.bottomAnchor constant:6],
+        [self.liveButton.heightAnchor constraintEqualToConstant:36],
+
+        [self.liveQualityButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.liveQualityButton.topAnchor constraintEqualToAnchor:self.liveButton.bottomAnchor constant:6],
+        [self.liveQualityButton.heightAnchor constraintEqualToConstant:36],
+
+        [self.liveFPSButton.trailingAnchor constraintEqualToAnchor:self.pauseButton.trailingAnchor],
+        [self.liveFPSButton.topAnchor constraintEqualToAnchor:self.liveQualityButton.bottomAnchor constant:6],
+        [self.liveFPSButton.heightAnchor constraintEqualToConstant:36],
+
         [self.modelCollection.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:8],
         [self.modelCollection.trailingAnchor constraintEqualToAnchor:self.pauseButton.leadingAnchor constant:-8],
         [self.modelCollection.topAnchor constraintEqualToAnchor:g.topAnchor constant:8],
@@ -624,6 +799,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.camPreviewHeight.active = YES;
 
     [self applyCamPreviewVisible:YES];
+    [self refreshLiveQualityButton];
     [self.view bringSubviewToFront:self.camPreviewView];
     [self.view bringSubviewToFront:self.movePad];
 

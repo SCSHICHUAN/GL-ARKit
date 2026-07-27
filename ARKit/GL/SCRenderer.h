@@ -7,7 +7,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SCRenderCapture;
+
 @interface SCRenderer : UIView
+
+/// 直播抓帧（SCRenderCapture attach 后设置）；render 完成后回调
+@property (nonatomic, weak, nullable) SCRenderCapture *renderCapture;
 
 /// Start GLES context, scene, and display link. Call once after added to hierarchy (or from VC viewDidLoad).
 - (BOOL)startRendering;
