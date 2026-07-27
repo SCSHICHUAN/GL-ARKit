@@ -53,18 +53,26 @@
     VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_AverageBitRate, bitRate);
     CFRelease(bitRate);
 
-    // 与 Media 一致：关键帧间隔固定 60（不跟 fps 绑死）
-    CFNumberRef keyFrameInterval = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &(int){60});
+    // GOP ≈ 1s，降低开播/追帧等待（原先固定 60 帧，在 30fps 下等于 2s）
+    int fps = self.fps > 0 ? self.fps : 30;
+    int keyInterval = fps;
+    CFNumberRef keyFrameInterval = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &keyInterval);
     VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_MaxKeyFrameInterval, keyFrameInterval);
     CFRelease(keyFrameInterval);
+    CFNumberRef keyDuration = CFNumberCreate(kCFAllocatorDefault, kCFNumberFloat64Type, &(double){1.0});
+    VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, keyDuration);
+    CFRelease(keyDuration);
 
-    int fps = self.fps;
-    if (fps > 0 && fps != 30) {
-        CFNumberRef expectedFPS = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &fps);
-        VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_ExpectedFrameRate, expectedFPS);
-        CFRelease(expectedFPS);
-    }
-    
+    CFNumberRef expectedFPS = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &fps);
+    VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_ExpectedFrameRate, expectedFPS);
+    CFRelease(expectedFPS);
+
+    // 尽量不攒帧再出，降低编码端延迟
+    int maxDelay = 0;
+    CFNumberRef maxFrameDelay = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &maxDelay);
+    VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_MaxFrameDelayCount, maxFrameDelay);
+    CFRelease(maxFrameDelay);
+
     VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
     
     status = VTCompressionSessionPrepareToEncodeFrames(_compressionSession);

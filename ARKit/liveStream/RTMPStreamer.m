@@ -57,12 +57,15 @@
 
 #import "RTMPStreamer.h"
 #import "rtmp.h"
+#import <QuartzCore/QuartzCore.h>
 
 @interface RTMPStreamer ()
 {
     RTMP *_rtmp;
     dispatch_queue_t _rtmpQueue;
     BOOL _hasSentAudioHeader;
+    BOOL _hasTimestampBase;
+    CFTimeInterval _timestampBaseHost;
 }
 @property (nonatomic, strong) NSString *rtmpURL;
 @property (nonatomic, assign) BOOL isStreaming;
@@ -75,8 +78,22 @@
         _rtmpURL = [rtmpURL copy];
         _rtmpQueue = dispatch_queue_create("com.example.RTMPStreamer", DISPATCH_QUEUE_SERIAL);
         _hasSentAudioHeader = NO;
+        _hasTimestampBase = NO;
+        _timestampBaseHost = 0;
     }
     return self;
+}
+
+/// 音视频统一用主机时钟相对时间戳，避免 Avatar 视频(从0)与麦克风音频(主机绝对 PTS)错位导致播放器狂缓冲。
+- (uint32_t)rtmpTimestampMs {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (!_hasTimestampBase) {
+        _timestampBaseHost = now;
+        _hasTimestampBase = YES;
+    }
+    double ms = (now - _timestampBaseHost) * 1000.0;
+    if (ms < 0) ms = 0;
+    return (uint32_t)ms;
 }
 
 - (void)configureAudioSampleRate:(int)sampleRate channels:(int)channels {
@@ -112,6 +129,7 @@
         return NO;
     }
     
+    _hasTimestampBase = NO;
     _isStreaming = YES;
     NSLog(@"[RTMP] Streaming started");
     return YES;
@@ -128,6 +146,7 @@
         }
         self->_isStreaming = NO;
         self->_hasSentAudioHeader = NO;
+        self->_hasTimestampBase = NO;
     });
     
     NSLog(@"[RTMP] Streaming stopped");
@@ -218,6 +237,7 @@
         const uint8_t *data = frameData.bytes;
         int totalLen = (int)frameData.length;
         if (totalLen < 4) return;
+        uint32_t ts = [self rtmpTimestampMs];
         
         // VideoToolbox 输出是 AVCC 格式: [length][NALU][length][NALU]...
         int offset = 0;
@@ -264,7 +284,7 @@
             
             packet.m_packetType = RTMP_PACKET_TYPE_VIDEO;
             packet.m_nBodySize = bodySize;
-            packet.m_nTimeStamp = (uint32_t)(CMTimeGetSeconds(pts) * 1000);
+            packet.m_nTimeStamp = ts;
             packet.m_nChannel = 0x04;
             packet.m_headerType = RTMP_PACKET_SIZE_MEDIUM;
             packet.m_nInfoField2 = self->_rtmp->m_stream_id;
@@ -275,8 +295,8 @@
             
             offset += nalLen;
         }
-        
-        NSLog(@"video PTS: %.6f 秒", CMTimeGetSeconds(pts));
+        (void)pts;
+        (void)isKeyFrame;
     });
 }
 
@@ -372,7 +392,7 @@
         
         packet.m_packetType = RTMP_PACKET_TYPE_AUDIO;   // 音频类型
         packet.m_nBodySize = bodySize;                  // body 长度
-        packet.m_nTimeStamp = (uint32_t)(CMTimeGetSeconds(pts) * 1000); // 时间戳(ms)
+        packet.m_nTimeStamp = [self rtmpTimestampMs];
         packet.m_nChannel = 0x05;                       // 音频通道固定为 5
         packet.m_headerType = RTMP_PACKET_SIZE_MEDIUM;  // 视频帧用 medium 头，音频同样可用
         packet.m_nInfoField2 = self->_rtmp->m_stream_id;
@@ -380,9 +400,8 @@
         RTMP_SendPacket(self->_rtmp, &packet, TRUE);
         RTMPPacket_Free(&packet);
         free(body);
+        (void)pts;
     });
-    
-    NSLog(@"audio PTS: %.6f 秒", CMTimeGetSeconds(pts));
 }
 /*
  ============================== ADTS ===========================
