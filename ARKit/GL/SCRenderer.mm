@@ -481,8 +481,14 @@
         return;
     }
 
+    // 切模型前强制收起「身后大视频」（expandT 立刻归零）。
+    // 若只设 expanded=NO，DisplayLink 暂停时 expandT 停在 1，首帧仍走世界平面→加载后出现极慢。
+    self.hostVideoExpanded = NO;
+    if (self.data) self.data->resetHostVideoExpandForModelLoad();
+
     self.displayLink.paused = YES;
     self.modelLoadBusy = YES;
+    CFTimeInterval tGate = CACurrentMediaTime();
     EAGLContext *shareCtx =
         [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3
                                sharegroup:self.context.sharegroup];
@@ -495,17 +501,35 @@
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         [EAGLContext setCurrentContext:shareCtx];
+        CFTimeInterval t0 = CACurrentMediaTime();
         BOOL ok = work();
-        glFinish();
+        CFTimeInterval tAfterWork = CACurrentMediaTime();
+        // 勿 Finish：会空等 sharegroup 上全部 GPU 命令，拖长「加载→回主线程上屏」
+        glFlush();
+        CFTimeInterval tAfterFlush = CACurrentMediaTime();
+        NSLog(@"[ModelTiming] A bg work %.0fms | B glFlush %.0fms",
+              (tAfterWork - t0) * 1000.0,
+              (tAfterFlush - tAfterWork) * 1000.0);
         [EAGLContext setCurrentContext:nil];
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            CFTimeInterval tMain = CACurrentMediaTime();
             [EAGLContext setCurrentContext:self.context];
             if (ok && self.data) {
                 self.data->rebindCurrentModelGPU();
             }
+            CFTimeInterval tRebind = CACurrentMediaTime();
             self.modelLoadBusy = NO;
             self.displayLink.paused = NO;
+            // 立刻画一帧，模型马上出现（不等下一个 DisplayLink）
+            if (ok) {
+                [self drawFrame:self.displayLink];
+            }
+            CFTimeInterval tPresent = CACurrentMediaTime();
+            NSLog(@"[ModelTiming] C main rebind %.0fms | D firstPresent %.0fms | gate→screen %.0fms",
+                  (tRebind - tMain) * 1000.0,
+                  (tPresent - tRebind) * 1000.0,
+                  (tPresent - tGate) * 1000.0);
             if (completion) completion(ok);
         });
     });

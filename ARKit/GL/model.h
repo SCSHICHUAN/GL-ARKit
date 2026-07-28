@@ -19,6 +19,7 @@
 #include <functional>
 #include <cstdlib>
 #include <cmath>
+#include <chrono>
 
 #include "gl_platform.h"
 #include "stb_image.h"
@@ -239,15 +240,26 @@ public:
 private:
     //加载模型资源
     void loadModel(string const &path){
+        auto tAll = std::chrono::steady_clock::now();
+        auto ms = [](std::chrono::steady_clock::time_point a) {
+            return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - a).count();
+        };
+
         // iOS 使用的 Assimp 5：关闭 FBX pivot 拆分，行为才接近原先桌面版 Assimp
         importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
         // blackMan 等大骨架：拆成每 mesh ≤64，才能用 100 槽调色板蒙皮
         importer.SetPropertyInteger(AI_CONFIG_PP_SBBC_MAX_BONES, 64);
+
+        auto t0 = std::chrono::steady_clock::now();
+        //读入文件 储存了根节点  定义了数据结构  以及各个模型的网格
+        // iOS OpenGL ES：必须有顶点法线（否则 lighting 全黑）；切线可选
         const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate |
                                                  aiProcess_GenSmoothNormals |
                                                  aiProcess_FlipUVs |
                                                  aiProcess_CalcTangentSpace |
                                                  aiProcess_SplitByBoneCount);
+        printf("[ModelTiming] 1 Assimp ReadFile+postprocess %lldms\n", ms(t0));
         if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode){
             cout << "ERROR::ASSIMP::" << importer.GetErrorString() << endl;
             return;
@@ -261,7 +273,10 @@ private:
         cout << "Number of meshes: " << scene->mNumMeshes << endl;
         cout << "Number of animations: " << scene->mNumAnimations << endl;
 
+        t0 = std::chrono::steady_clock::now();
         processNode(scene->mRootNode, scene);
+        printf("[ModelTiming] 2 processNode(mesh+morph+tex+VBO) %lldms  meshes=%zu texCache=%zu\n",
+               ms(t0), meshes.size(), textures_loaded.size());
 
         // Assimp FBX：厂商 mOffsetMatrix 常与节点层级不一致 → 蒙皮炸开。
         // 用 bind 姿势重算 offset = inv(boneGlobal) * meshGlobal（不改蒙皮公式）。
@@ -269,6 +284,7 @@ private:
         const bool isFbx = path.size() >= 4 &&
             (path.compare(path.size() - 4, 4, ".fbx") == 0 ||
              path.compare(path.size() - 4, 4, ".FBX") == 0);
+        t0 = std::chrono::steady_clock::now();
         if (isFbx && boneCount > 0) {
             glm::mat4 meshGlobal(1.0f);
             bool foundMesh = false;
@@ -297,10 +313,12 @@ private:
                 };
             fixOffsets(scene->mRootNode, glm::mat4(1.0f));
         }
+        printf("[ModelTiming] 3 FBX offset fix %lldms (isFbx=%d)\n", ms(t0), (int)isFbx);
 
         // 加载动画数据
         // 注意：Animation 构建需要 boneInfoMap/boneCount（在 processMesh 里填充），
         // 所以必须在 processNode/processMesh 跑完之后再创建，否则 bones 列表会是空的，动画不会动。
+        t0 = std::chrono::steady_clock::now();
         if (scene->mNumAnimations > 0) {
             // 打印所有动画，方便你找“run/奔跑”
             cout << "Animations in file (" << scene->mNumAnimations << "):" << endl;
@@ -378,6 +396,9 @@ private:
             animation = getAnimation(bestIndex);
             cout << "Animation loaded!" << endl;
         }
+        printf("[ModelTiming] 4 Animation channels/keys %lldms  clips=%zu\n",
+               ms(t0), animations.size());
+        printf("[ModelTiming] Model::loadModel TOTAL %lldms  path=%s\n", ms(tAll), path.c_str());
     }
     //从根node开递归加载网格
     void processNode(aiNode *node,const aiScene *scene){
@@ -768,7 +789,6 @@ unsigned int TextureFromFile(const char *path, const string &directory, const ai
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         glGenerateMipmap(GL_TEXTURE_2D);
-
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);

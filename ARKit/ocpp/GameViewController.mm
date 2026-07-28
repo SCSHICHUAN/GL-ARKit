@@ -1036,6 +1036,7 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         __strong typeof(weakSelf) self = weakSelf;
         if (!self) return;
         [self setModelLoadingVisible:NO];
+        [self syncHostVideoRectToGL];
         if (!ok) {
             self.arDumpLabel.text = [NSString stringWithFormat:@"模型加载失败: %@", self.modelNames[(NSUInteger)index]];
             [self.modelCollection reloadData];

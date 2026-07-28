@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <dirent.h>
@@ -267,6 +268,11 @@ struct SCRendererData::Impl {
     float hostVideoWorldZ = -0.65f;
     bool hostVideoMoveCloser = false;
     bool hostVideoMoveFarther = false;
+    /// 展开动画起点（点击时缓存一次，避免每帧 inverse(P*V) 拖慢上屏）
+    bool hostVideoAnimStartValid = false;
+    glm::vec3 hostVideoAnimStartC{0.0f};
+    float hostVideoAnimStartW = 0.2f;
+    float hostVideoAnimStartH = 0.3f;
 
     int screenWidth = 1000;
     int screenHeight = 750;
@@ -661,59 +667,66 @@ struct SCRendererData::Impl {
             }
             const float largeH = 2.2f;
             const float largeW = largeH * pixAspect;
-            // 小窗投到身后深度附近作为起点；终点在人物身后放大
-            const float zStart = hostVideoWorldZ + 0.55f;
             const float midY = modelYOffset + 1.0f;
-
-            glm::vec3 pipC(modelXOffset - 0.6f, modelYOffset + 0.35f, zStart);
-            float smallW = largeW * 0.22f;
-            float smallH = largeH * 0.22f;
-            if (hostVideoRectValid) {
-                float L = hostVideoRectX, T = hostVideoRectY, W = hostVideoRectW, H = hostVideoRectH;
-                float ndcL = L * 2.0f - 1.0f;
-                float ndcR = (L + W) * 2.0f - 1.0f;
-                float ndcT = 1.0f - T * 2.0f;
-                float ndcB = 1.0f - (T + H) * 2.0f;
-                if (renderFlipY) {
-                    float nt = -ndcB, nb = -ndcT;
-                    ndcT = nt; ndcB = nb;
-                }
-                glm::mat4 invVP = glm::inverse(projection * view);
-                auto onZ = [&](float nx, float ny) {
-                    glm::vec4 a = invVP * glm::vec4(nx, ny, -1.0f, 1.0f);
-                    glm::vec4 b = invVP * glm::vec4(nx, ny,  1.0f, 1.0f);
-                    glm::vec3 pa = glm::vec3(a) / a.w;
-                    glm::vec3 pb = glm::vec3(b) / b.w;
-                    glm::vec3 dir = pb - pa;
-                    if (fabsf(dir.z) < 1e-6f) return pa;
-                    float t = (zStart - pa.z) / dir.z;
-                    return pa + dir * t;
-                };
-                glm::vec3 bl = onZ(ndcL, ndcB);
-                glm::vec3 br = onZ(ndcR, ndcB);
-                glm::vec3 tl = onZ(ndcL, ndcT);
-                glm::vec3 tr = onZ(ndcR, ndcT);
-                pipC = 0.25f * (bl + br + tl + tr);
-                smallW = glm::length(br - bl);
-                smallH = glm::length(tl - bl);
-                if (smallW < 1e-4f) smallW = largeW * 0.22f;
-                if (smallH < 1e-4f) smallH = largeH * 0.22f;
-            }
-
             glm::vec3 behindC(modelXOffset, midY, hostVideoWorldZ);
 
-            auto smooth01 = [](float t) {
-                if (t <= 0.f) return 0.f;
-                if (t >= 1.f) return 1.f;
-                return t * t * (3.f - 2.f * t);
-            };
-            // 一步到位：边移动边放大到人物身后
-            float u = smooth01(hostVideoExpandT);
-            glm::vec3 center = glm::mix(pipC, behindC, u);
-            float planeW = glm::mix(smallW, largeW, u);
-            float planeH = glm::mix(smallH, largeH, u);
+            // 已完全展开：只画身后大板，绝不每帧做 inverse（否则模型切换后首帧极慢）
+            if (hostVideoExpandT >= 0.999f) {
+                drawWorldPlane(behindC, largeW, largeH);
+            } else {
+                const float zStart = hostVideoWorldZ + 0.55f;
+                if (!hostVideoAnimStartValid) {
+                    glm::vec3 pipC(modelXOffset - 0.6f, modelYOffset + 0.35f, zStart);
+                    float smallW = largeW * 0.22f;
+                    float smallH = largeH * 0.22f;
+                    if (hostVideoRectValid) {
+                        float L = hostVideoRectX, T = hostVideoRectY, W = hostVideoRectW, H = hostVideoRectH;
+                        float ndcL = L * 2.0f - 1.0f;
+                        float ndcR = (L + W) * 2.0f - 1.0f;
+                        float ndcT = 1.0f - T * 2.0f;
+                        float ndcB = 1.0f - (T + H) * 2.0f;
+                        if (renderFlipY) {
+                            float nt = -ndcB, nb = -ndcT;
+                            ndcT = nt; ndcB = nb;
+                        }
+                        glm::mat4 invVP = glm::inverse(projection * view);
+                        auto onZ = [&](float nx, float ny) {
+                            glm::vec4 a = invVP * glm::vec4(nx, ny, -1.0f, 1.0f);
+                            glm::vec4 b = invVP * glm::vec4(nx, ny,  1.0f, 1.0f);
+                            glm::vec3 pa = glm::vec3(a) / a.w;
+                            glm::vec3 pb = glm::vec3(b) / b.w;
+                            glm::vec3 dir = pb - pa;
+                            if (fabsf(dir.z) < 1e-6f) return pa;
+                            float t = (zStart - pa.z) / dir.z;
+                            return pa + dir * t;
+                        };
+                        glm::vec3 bl = onZ(ndcL, ndcB);
+                        glm::vec3 br = onZ(ndcR, ndcB);
+                        glm::vec3 tl = onZ(ndcL, ndcT);
+                        glm::vec3 tr = onZ(ndcR, ndcT);
+                        pipC = 0.25f * (bl + br + tl + tr);
+                        smallW = glm::length(br - bl);
+                        smallH = glm::length(tl - bl);
+                        if (smallW < 1e-4f) smallW = largeW * 0.22f;
+                        if (smallH < 1e-4f) smallH = largeH * 0.22f;
+                    }
+                    hostVideoAnimStartC = pipC;
+                    hostVideoAnimStartW = smallW;
+                    hostVideoAnimStartH = smallH;
+                    hostVideoAnimStartValid = true;
+                }
 
-            drawWorldPlane(center, planeW, planeH);
+                auto smooth01 = [](float t) {
+                    if (t <= 0.f) return 0.f;
+                    if (t >= 1.f) return 1.f;
+                    return t * t * (3.f - 2.f * t);
+                };
+                float u = smooth01(hostVideoExpandT);
+                glm::vec3 center = glm::mix(hostVideoAnimStartC, behindC, u);
+                float planeW = glm::mix(hostVideoAnimStartW, largeW, u);
+                float planeH = glm::mix(hostVideoAnimStartH, largeH, u);
+                drawWorldPlane(center, planeW, planeH);
+            }
         } else {
             // 收起稳态：屏幕小窗（NDC）
             if (!hostVideoRectValid) {
@@ -1178,11 +1191,24 @@ void SCRendererData::setHostVideoRotationDegrees(float degrees) {
 void SCRendererData::setHostVideoExpanded(bool expanded) {
     if (!impl_) return;
     impl_->hostVideoExpanded = expanded;
-    if (!expanded) {
+    if (expanded) {
+        // 下一帧缓存起点；开始展开时清旧缓存
+        impl_->hostVideoAnimStartValid = false;
+    } else {
         impl_->hostVideoMoveCloser = false;
         impl_->hostVideoMoveFarther = false;
+        impl_->hostVideoAnimStartValid = false;
     }
-    // expandT 由 update 向 0/1 插值，不瞬间跳变
+}
+
+/// 模型切换时立刻收起视频板，避免「加载→首帧」还走展开世界平面路径
+void SCRendererData::resetHostVideoExpandForModelLoad() {
+    if (!impl_) return;
+    impl_->hostVideoExpanded = false;
+    impl_->hostVideoExpandT = 0.0f;
+    impl_->hostVideoMoveCloser = false;
+    impl_->hostVideoMoveFarther = false;
+    impl_->hostVideoAnimStartValid = false;
 }
 
 bool SCRendererData::isHostVideoExpanded() const {
@@ -1271,16 +1297,27 @@ bool SCRendererData::loadModelAtIndex(int index) {
 
     const CatalogEntry& entry = impl_->catalog[(size_t)index];
     std::string path = impl_->resourceRoot + "/" + entry.relativePath;
+    printf("[ModelTiming] —— loadModelAtIndex begin %s ——\n", entry.name.c_str());
+    auto tAll = std::chrono::steady_clock::now();
+    auto ms = [&](std::chrono::steady_clock::time_point a) {
+        return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - a).count();
+    };
+
     printf("[Model] loading %s → %s\n", entry.name.c_str(), path.c_str());
 
+    auto t0 = std::chrono::steady_clock::now();
     Model* next = new Model(path);
+    printf("[ModelTiming] 5 new Model() returned %lldms\n", ms(t0));
     if (next->getMeshCount() <= 0) {
         printf("[Model] load failed (0 meshes): %s\n", path.c_str());
         delete next;
         return false;
     }
 
+    t0 = std::chrono::steady_clock::now();
     impl_->destroyCurrentModel();
+    printf("[ModelTiming] 6 destroyCurrentModel %lldms\n", ms(t0));
     impl_->ourModel = next;
     impl_->gModel = next;
     impl_->currentModelIndex = index;
@@ -1313,6 +1350,7 @@ bool SCRendererData::loadModelAtIndex(int index) {
         printf("[Model] blackMan-style: eyelid/jaw bones + Apple-order morphs\n");
     }
 
+    t0 = std::chrono::steady_clock::now();
     if (next->getAnimation()) {
         impl_->animator = new Animator(next->getAnimation());
         impl_->gIdleAnimIndex = next->getAnimation()->getAnimationIndex();
@@ -1321,8 +1359,10 @@ bool SCRendererData::loadModelAtIndex(int index) {
     }
     impl_->gAnimator = impl_->animator;
     impl_->buildAnimKeyMap();
+    printf("[ModelTiming] 7 Animator+animKeyMap %lldms\n", ms(t0));
 
     // 扶正：最长边视为头→脚，转到世界 +Y；再把中轴线移到 Y 轴，左右滑才是原地转
+    t0 = std::chrono::steady_clock::now();
     {
         const std::map<int, glm::mat4>* bones = nullptr;
         if (impl_->animator) bones = &impl_->animator->getFinalBoneMatrices();
@@ -1399,8 +1439,6 @@ bool SCRendererData::loadModelAtIndex(int index) {
                 // X 为身高：转到 +Y
                 const bool feetAtMaxX = std::fabs(bmax.x) <= std::fabs(bmin.x);
                 if (feetAtMaxX) {
-                    // Rz(-90): (x,y,z)->(y,-x,z)，x≈0 → 需另一端…
-                    // Rz(+90): (x,y,z)->(-y,x,z) 使 x→y
                     basis = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
                 } else {
                     basis = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 0, 1));
@@ -1416,6 +1454,8 @@ bool SCRendererData::loadModelAtIndex(int index) {
                    pivot.x, pivot.y, pivot.z, ext.x, ext.y, ext.z);
         }
     }
+    printf("[ModelTiming] 8 upright bounds %lldms\n", ms(t0));
+    printf("[ModelTiming] —— loadModelAtIndex TOTAL %lldms (%s) ——\n", ms(tAll), entry.name.c_str());
 
     return true;
 }

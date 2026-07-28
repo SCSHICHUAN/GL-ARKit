@@ -35,6 +35,8 @@ public:
     /// 点击小窗：铺满窗口并画在模型后；再点恢复。
     void setHostVideoExpanded(bool expanded);
     bool isHostVideoExpanded() const;
+    /// 切模型前强制收起，避免展开视频拖慢加载→首帧
+    void resetHostVideoExpandForModelLoad();
     /// 展开时按住调节视频板前后（世界 Z；+ 朝相机）
     void setHostVideoMoveCloser(bool on);
     void setHostVideoMoveFarther(bool on);
