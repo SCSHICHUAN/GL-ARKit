@@ -23,7 +23,8 @@ public:
     void setRenderFlipY(bool flipY);
 
     /// 主播 YUV 面板（GLuint 纹理，由 ObjC TextureCache 上传）
-    void setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid);
+    void setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid,
+                              int pixelW = 0, int pixelH = 0);
     void setHostVideoOrientation(int cgImageOrientation /*1..8*/);
     void setHostVideoMirrorX(bool mirror);
     void setHostVideoVisible(bool visible);
@@ -31,6 +32,12 @@ public:
     void setHostVideoScreenRectNorm(float x, float y, float w, float h);
     /// 视频矩形绕面对角线旋转角（度），范围 [0, 90]
     void setHostVideoRotationDegrees(float degrees);
+    /// 点击小窗：铺满窗口并画在模型后；再点恢复。
+    void setHostVideoExpanded(bool expanded);
+    bool isHostVideoExpanded() const;
+    /// 展开时按住调节视频板前后（世界 Z；+ 朝相机）
+    void setHostVideoMoveCloser(bool on);
+    void setHostVideoMoveFarther(bool on);
 
     // Touch / gesture input (replaces mouse + keyboard)
     void onTouchBegan(float x, float y);
@@ -43,6 +50,9 @@ public:
     void setMoveRight(bool on);
     void setMoveUp(bool on);
     void setMoveDown(bool on);
+    /// 绕人物世界 Y 轴环绕（相机始终看人）
+    void setOrbitLeft(bool on);
+    void setOrbitRight(bool on);
 
     void toggleAnimPause();
 

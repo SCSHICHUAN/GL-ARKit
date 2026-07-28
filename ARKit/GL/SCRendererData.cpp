@@ -250,6 +250,8 @@ struct SCRendererData::Impl {
     unsigned int hostVideoYTex = 0;
     unsigned int hostVideoUVTex = 0;
     bool hostVideoValid = false;
+    int hostVideoPixelW = 0;
+    int hostVideoPixelH = 0;
     bool hostVideoVisible = true;
     int hostVideoOrientation = 6; // CGImagePropertyOrientationRight
     bool hostVideoMirrorX = true;
@@ -259,7 +261,12 @@ struct SCRendererData::Impl {
     float hostVideoRectW = 0.15f;
     float hostVideoRectH = 0.18f;
     bool hostVideoRectValid = false;
-    float hostVideoRotDeg = 0.0f; // 绕对角线，限制 0~90°
+    float hostVideoRotDeg = 0.0f; // 绕底边前后翻：上滑负角向后，下滑正角向前，-90~90°
+    bool hostVideoExpanded = false; // 目标态：展开 / 收起
+    float hostVideoExpandT = 0.0f;  // 0=小窗 … 1=身后放大（同时移动+放大）
+    float hostVideoWorldZ = -0.65f;
+    bool hostVideoMoveCloser = false;
+    bool hostVideoMoveFarther = false;
 
     int screenWidth = 1000;
     int screenHeight = 750;
@@ -461,6 +468,7 @@ struct SCRendererData::Impl {
 
     bool moveForward = false, moveBackward = false, moveLeft = false;
     bool moveRight = false, moveUp = false, moveDown = false;
+    bool orbitLeft = false, orbitRight = false;
 
     Impl()
         : camera(glm::vec3(0.0f, 1.6f, 2.8f), glm::vec3(0.0f, 1.0f, 0.0f), -88.0f, -30.0f)
@@ -603,67 +611,164 @@ struct SCRendererData::Impl {
         glBindVertexArray(0);
     }
 
-    void drawHostVideoQuad(const glm::mat4& /*projection*/, const glm::mat4& /*view*/) {
+    void drawHostVideoQuad(const glm::mat4& projection, const glm::mat4& view) {
         if (!hostVideoVisible || !hostVideoValid || !yuvQuadShader || !videoQuadVAO) return;
-        if (!hostVideoYTex || !hostVideoUVTex || !hostVideoRectValid) return;
-
-        // 屏幕空间 NDC（与前置预览小窗同位置同大小）；不受场景相机影响
-        float L = hostVideoRectX;
-        float T = hostVideoRectY;
-        float W = hostVideoRectW;
-        float H = hostVideoRectH;
-        if (W <= 1e-4f || H <= 1e-4f) return;
-
-        float ndcL = L * 2.0f - 1.0f;
-        float ndcR = (L + W) * 2.0f - 1.0f;
-        float ndcT = 1.0f - T * 2.0f;
-        float ndcB = 1.0f - (T + H) * 2.0f;
-        // 编码 FBO：3D 已 FlipY，屏幕空间小窗要镜像 Y，才能仍在观看端下方
-        if (renderFlipY) {
-            float nt = -ndcB;
-            float nb = -ndcT;
-            ndcT = nt;
-            ndcB = nb;
-        }
-        float cx = 0.5f * (ndcL + ndcR);
-        float cy = 0.5f * (ndcB + ndcT);
-        float sx = (ndcR - ndcL);
-        float sy = (ndcT - ndcB);
-
-        // 绕视频面可视对角线（左下→右上）旋转，限制 0~90°
-        float ang = glm::radians(hostVideoRotDeg);
-        glm::vec3 diag = glm::normalize(glm::vec3(sx, sy, 0.0f));
-        glm::mat4 ident(1.0f);
-        glm::mat4 model(1.0f);
-        model = glm::translate(model, glm::vec3(cx, cy, 0.0f));
-        model = glm::rotate(model, ang, diag);
-        model = glm::scale(model, glm::vec3(sx, sy, 1.0f));
-
-        GLboolean depthWas = glIsEnabled(GL_DEPTH_TEST);
-        glDisable(GL_DEPTH_TEST);
+        if (!hostVideoYTex || !hostVideoUVTex) return;
 
         yuvQuadShader->use();
-        yuvQuadShader->setMat4("projection", ident);
-        yuvQuadShader->setMat4("view", ident);
-        yuvQuadShader->setMat4("model", model);
         yuvQuadShader->setInt("yTex", 0);
         yuvQuadShader->setInt("uvTex", 1);
         yuvQuadShader->setInt("orientation", hostVideoOrientation);
         yuvQuadShader->setBool("mirrorX", hostVideoMirrorX);
-        // 显示端 upright；编码 FlipY 后小窗内容要再竖翻一次，观看端才正
-        yuvQuadShader->setBool("flipTexY", renderFlipY);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, hostVideoYTex);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, hostVideoUVTex);
-
         glBindVertexArray(videoQuadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        auto drawWorldPlane = [&](glm::vec3 center, float planeW, float planeH) {
+            float ang = glm::radians(hostVideoRotDeg);
+            glm::vec3 pivot(center.x, center.y - 0.5f * planeH, center.z);
+            glm::mat4 model(1.0f);
+            model = glm::translate(model, pivot);
+            if (fabsf(hostVideoRotDeg) > 1e-3f)
+                model = glm::rotate(model, ang, glm::vec3(1.0f, 0.0f, 0.0f));
+            model = glm::translate(model, glm::vec3(0.0f, 0.5f * planeH, 0.0f));
+            model = glm::scale(model, glm::vec3(planeW, planeH, 1.0f));
+
+            GLboolean depthWas = glIsEnabled(GL_DEPTH_TEST);
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_TRUE);
+
+            yuvQuadShader->setMat4("projection", projection);
+            yuvQuadShader->setMat4("view", view);
+            yuvQuadShader->setMat4("model", model);
+            yuvQuadShader->setBool("flipTexY", renderFlipY);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            if (!depthWas) glDisable(GL_DEPTH_TEST);
+        };
+
+        // 空间过渡 / 已展开：同一块世界平面，按 expandT 插值
+        if (hostVideoExpandT > 1e-4f) {
+            float pixAspect = 3.0f / 4.0f;
+            if (hostVideoRectValid && hostVideoRectH > 1e-6f && screenHeight > 0) {
+                float pixW = hostVideoRectW * (float)screenWidth;
+                float pixH = hostVideoRectH * (float)screenHeight;
+                if (pixH > 1e-3f)
+                    pixAspect = pixW / pixH;
+            }
+            const float largeH = 2.2f;
+            const float largeW = largeH * pixAspect;
+            // 小窗投到身后深度附近作为起点；终点在人物身后放大
+            const float zStart = hostVideoWorldZ + 0.55f;
+            const float midY = modelYOffset + 1.0f;
+
+            glm::vec3 pipC(modelXOffset - 0.6f, modelYOffset + 0.35f, zStart);
+            float smallW = largeW * 0.22f;
+            float smallH = largeH * 0.22f;
+            if (hostVideoRectValid) {
+                float L = hostVideoRectX, T = hostVideoRectY, W = hostVideoRectW, H = hostVideoRectH;
+                float ndcL = L * 2.0f - 1.0f;
+                float ndcR = (L + W) * 2.0f - 1.0f;
+                float ndcT = 1.0f - T * 2.0f;
+                float ndcB = 1.0f - (T + H) * 2.0f;
+                if (renderFlipY) {
+                    float nt = -ndcB, nb = -ndcT;
+                    ndcT = nt; ndcB = nb;
+                }
+                glm::mat4 invVP = glm::inverse(projection * view);
+                auto onZ = [&](float nx, float ny) {
+                    glm::vec4 a = invVP * glm::vec4(nx, ny, -1.0f, 1.0f);
+                    glm::vec4 b = invVP * glm::vec4(nx, ny,  1.0f, 1.0f);
+                    glm::vec3 pa = glm::vec3(a) / a.w;
+                    glm::vec3 pb = glm::vec3(b) / b.w;
+                    glm::vec3 dir = pb - pa;
+                    if (fabsf(dir.z) < 1e-6f) return pa;
+                    float t = (zStart - pa.z) / dir.z;
+                    return pa + dir * t;
+                };
+                glm::vec3 bl = onZ(ndcL, ndcB);
+                glm::vec3 br = onZ(ndcR, ndcB);
+                glm::vec3 tl = onZ(ndcL, ndcT);
+                glm::vec3 tr = onZ(ndcR, ndcT);
+                pipC = 0.25f * (bl + br + tl + tr);
+                smallW = glm::length(br - bl);
+                smallH = glm::length(tl - bl);
+                if (smallW < 1e-4f) smallW = largeW * 0.22f;
+                if (smallH < 1e-4f) smallH = largeH * 0.22f;
+            }
+
+            glm::vec3 behindC(modelXOffset, midY, hostVideoWorldZ);
+
+            auto smooth01 = [](float t) {
+                if (t <= 0.f) return 0.f;
+                if (t >= 1.f) return 1.f;
+                return t * t * (3.f - 2.f * t);
+            };
+            // 一步到位：边移动边放大到人物身后
+            float u = smooth01(hostVideoExpandT);
+            glm::vec3 center = glm::mix(pipC, behindC, u);
+            float planeW = glm::mix(smallW, largeW, u);
+            float planeH = glm::mix(smallH, largeH, u);
+
+            drawWorldPlane(center, planeW, planeH);
+        } else {
+            // 收起稳态：屏幕小窗（NDC）
+            if (!hostVideoRectValid) {
+                glBindVertexArray(0);
+                glActiveTexture(GL_TEXTURE0);
+                return;
+            }
+            float L = hostVideoRectX;
+            float T = hostVideoRectY;
+            float W = hostVideoRectW;
+            float H = hostVideoRectH;
+            if (W <= 1e-4f || H <= 1e-4f) {
+                glBindVertexArray(0);
+                glActiveTexture(GL_TEXTURE0);
+                return;
+            }
+
+            float ndcL = L * 2.0f - 1.0f;
+            float ndcR = (L + W) * 2.0f - 1.0f;
+            float ndcT = 1.0f - T * 2.0f;
+            float ndcB = 1.0f - (T + H) * 2.0f;
+            if (renderFlipY) {
+                float nt = -ndcB;
+                float nb = -ndcT;
+                ndcT = nt;
+                ndcB = nb;
+            }
+            float cx = 0.5f * (ndcL + ndcR);
+            float sx = (ndcR - ndcL);
+            float sy = (ndcT - ndcB);
+
+            float ang = glm::radians(hostVideoRotDeg);
+            glm::mat4 ident(1.0f);
+            glm::mat4 model(1.0f);
+            model = glm::translate(model, glm::vec3(cx, ndcB, 0.0f));
+            if (fabsf(hostVideoRotDeg) > 1e-3f)
+                model = glm::rotate(model, ang, glm::vec3(1.0f, 0.0f, 0.0f));
+            model = glm::translate(model, glm::vec3(0.0f, 0.5f * sy, 0.0f));
+            model = glm::scale(model, glm::vec3(sx, sy, 1.0f));
+
+            GLboolean depthWas = glIsEnabled(GL_DEPTH_TEST);
+            glDisable(GL_DEPTH_TEST);
+
+            yuvQuadShader->setMat4("projection", ident);
+            yuvQuadShader->setMat4("view", ident);
+            yuvQuadShader->setMat4("model", model);
+            yuvQuadShader->setBool("flipTexY", renderFlipY);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            if (depthWas) glEnable(GL_DEPTH_TEST);
+        }
+
         glBindVertexArray(0);
         glActiveTexture(GL_TEXTURE0);
-
-        if (depthWas) glEnable(GL_DEPTH_TEST);
     }
 
     void buildAnimKeyMap() {
@@ -818,6 +923,45 @@ void SCRendererData::update(float dt) {
     if (impl_->moveUp)       impl_->camera.ProcessKeyboard(UPWARD, dt);
     if (impl_->moveDown)     impl_->camera.ProcessKeyboard(DOWN, dt);
 
+    // 绕人物世界 Y（头→脚中轴）环绕，始终看向人
+    if (impl_->orbitLeft || impl_->orbitRight) {
+        const float speed = 1.1f; // rad/s
+        float dyaw = 0.f;
+        if (impl_->orbitLeft) dyaw += speed * dt;
+        if (impl_->orbitRight) dyaw -= speed * dt;
+        glm::vec3 pivot(impl_->modelXOffset, impl_->modelYOffset + 1.0f, 0.0f);
+        glm::vec3 offset = impl_->camera.Position - pivot;
+        glm::mat4 R = glm::rotate(glm::mat4(1.0f), dyaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        offset = glm::vec3(R * glm::vec4(offset, 0.0f));
+        impl_->camera.Position = pivot + offset;
+        impl_->camera.LookAtPoint(pivot);
+    }
+
+    // 展开视频板前后（世界 Z：越大越靠相机/人前）
+    if (impl_->hostVideoExpanded && impl_->hostVideoExpandT >= 0.999f &&
+        (impl_->hostVideoMoveCloser || impl_->hostVideoMoveFarther)) {
+        const float speed = 1.2f;
+        float dz = 0.f;
+        if (impl_->hostVideoMoveCloser) dz += speed * dt;
+        if (impl_->hostVideoMoveFarther) dz -= speed * dt;
+        float z = impl_->hostVideoWorldZ + dz;
+        if (z < -3.0f) z = -3.0f;
+        if (z > 1.2f) z = 1.2f;
+        impl_->hostVideoWorldZ = z;
+    }
+
+    // 视频：小窗边移动边放大到人物身后（收回反向）
+    {
+        const float animSpeed = 4.0f; // 0.25s 走完（1/0.25）
+        if (impl_->hostVideoExpanded && impl_->hostVideoExpandT < 1.0f) {
+            impl_->hostVideoExpandT += animSpeed * dt;
+            if (impl_->hostVideoExpandT > 1.0f) impl_->hostVideoExpandT = 1.0f;
+        } else if (!impl_->hostVideoExpanded && impl_->hostVideoExpandT > 0.0f) {
+            impl_->hostVideoExpandT -= animSpeed * dt;
+            if (impl_->hostVideoExpandT < 0.0f) impl_->hostVideoExpandT = 0.0f;
+        }
+    }
+
     // 头姿 SmoothDamp（blackMan 重 apply 被合并时，靠显示帧补中间值）
     if (impl_->faceDriveActive && impl_->animator) {
         const float st = 0.09f;
@@ -894,6 +1038,10 @@ void SCRendererData::render() {
         glFrontFace(GL_CCW);
     }
     glm::mat4 view = impl_->camera.GetViewMatrix();
+
+    // 展开过渡/完成：视频先画（深度在模型后）；完全收起：模型后再画小窗
+    if (impl_->hostVideoExpandT > 1e-4f)
+        impl_->drawHostVideoQuad(projection, view);
 
     impl_->ourShader->use();
     impl_->ourShader->setMat4("projection", projection);
@@ -975,15 +1123,25 @@ void SCRendererData::render() {
         impl_->ourModel->Draw(*impl_->ourShader, nullptr);
     }
 
-    // 主播摄像头 YUV 长方形（世界空间，进 Avatar 推流）
-    impl_->drawHostVideoQuad(projection, view);
+    // 主播摄像头 YUV：完全收起时画在模型前（小窗）
+    if (impl_->hostVideoExpandT <= 1e-4f)
+        impl_->drawHostVideoQuad(projection, view);
 }
 
-void SCRendererData::setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid) {
+void SCRendererData::setHostVideoTextures(unsigned int yTex, unsigned int uvTex, bool valid,
+                                          int pixelW, int pixelH) {
     if (!impl_) return;
     impl_->hostVideoYTex = yTex;
     impl_->hostVideoUVTex = uvTex;
     impl_->hostVideoValid = valid;
+    if (valid && pixelW > 0 && pixelH > 0) {
+        impl_->hostVideoPixelW = pixelW;
+        impl_->hostVideoPixelH = pixelH;
+    }
+    if (!valid) {
+        impl_->hostVideoPixelW = 0;
+        impl_->hostVideoPixelH = 0;
+    }
 }
 
 void SCRendererData::setHostVideoOrientation(int cgImageOrientation) {
@@ -1012,9 +1170,31 @@ void SCRendererData::setHostVideoScreenRectNorm(float x, float y, float w, float
 
 void SCRendererData::setHostVideoRotationDegrees(float degrees) {
     if (!impl_) return;
-    if (degrees < 0.f) degrees = 0.f;
+    if (degrees < -90.f) degrees = -90.f;
     if (degrees > 90.f) degrees = 90.f;
     impl_->hostVideoRotDeg = degrees;
+}
+
+void SCRendererData::setHostVideoExpanded(bool expanded) {
+    if (!impl_) return;
+    impl_->hostVideoExpanded = expanded;
+    if (!expanded) {
+        impl_->hostVideoMoveCloser = false;
+        impl_->hostVideoMoveFarther = false;
+    }
+    // expandT 由 update 向 0/1 插值，不瞬间跳变
+}
+
+bool SCRendererData::isHostVideoExpanded() const {
+    return impl_ && impl_->hostVideoExpanded;
+}
+
+void SCRendererData::setHostVideoMoveCloser(bool on) {
+    if (impl_) impl_->hostVideoMoveCloser = on;
+}
+
+void SCRendererData::setHostVideoMoveFarther(bool on) {
+    if (impl_) impl_->hostVideoMoveFarther = on;
 }
 
 void SCRendererData::onTouchBegan(float x, float y) {
@@ -1046,6 +1226,8 @@ void SCRendererData::setMoveLeft(bool on)     { if (impl_) impl_->moveLeft = on;
 void SCRendererData::setMoveRight(bool on)    { if (impl_) impl_->moveRight = on; }
 void SCRendererData::setMoveUp(bool on)       { if (impl_) impl_->moveUp = on; }
 void SCRendererData::setMoveDown(bool on)     { if (impl_) impl_->moveDown = on; }
+void SCRendererData::setOrbitLeft(bool on)    { if (impl_) impl_->orbitLeft = on; }
+void SCRendererData::setOrbitRight(bool on)   { if (impl_) impl_->orbitRight = on; }
 
 void SCRendererData::toggleAnimPause() {
     if (!impl_) return;

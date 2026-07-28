@@ -18,6 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) GLuint uvTextureName;
 @property (nonatomic, readonly) BOOL hasTexture;
 @property (nonatomic, readonly) CGImagePropertyOrientation orientation;
+@property (nonatomic, readonly) int pixelWidth;
+@property (nonatomic, readonly) int pixelHeight;
 /// 前置自拍默认镜像
 @property (nonatomic, assign) BOOL mirrorX;
 

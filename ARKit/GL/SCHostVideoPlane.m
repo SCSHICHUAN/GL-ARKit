@@ -18,6 +18,8 @@
 @property (nonatomic, assign) GLuint uvTextureName;
 @property (nonatomic, assign) BOOL hasTexture;
 @property (nonatomic, assign) CGImagePropertyOrientation orientation;
+@property (nonatomic, assign) int pixelWidth;
+@property (nonatomic, assign) int pixelHeight;
 @end
 
 @implementation SCHostVideoPlane
@@ -137,6 +139,8 @@
     self.yTextureName = CVOpenGLESTextureGetName(yTex);
     self.uvTextureName = CVOpenGLESTextureGetName(uvTex);
     self.orientation = orientation;
+    self.pixelWidth = (int)w;
+    self.pixelHeight = (int)h;
     self.hasTexture = YES;
     return YES;
 }

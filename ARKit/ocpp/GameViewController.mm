@@ -100,6 +100,8 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 @property (nonatomic, copy) NSArray<NSNumber *> *liveSourceValues;
 @property (nonatomic, strong) UILabel *arDumpLabel;
 @property (nonatomic, strong) UIStackView *movePad;
+@property (nonatomic, strong) UIStackView *orbitPad; // 相机按钮左侧：绕人 Y 轴左右环绕
+@property (nonatomic, strong) UIStackView *videoDepthPad; // 放大视频时：前后调节
 @property (nonatomic, strong) UIImageView *camPreviewView;
 @property (nonatomic, strong) CIContext *camPreviewCIContext;
 @property (nonatomic, strong) dispatch_queue_t camPreviewQueue;
@@ -110,8 +112,8 @@ static NSDictionary<NSString *, NSNumber *> *SCARMirrorLRWeights(NSDictionary<NS
 @property (nonatomic, assign) CGImagePropertyOrientation camPreviewPendingOrientation;
 @property (nonatomic, assign) BOOL camPreviewPendingDirty;
 @property (nonatomic, assign) CFTimeInterval lastCamPreviewGrabTime;
-@property (nonatomic, strong) NSLayoutConstraint *movePadLeadingToSafe;
-@property (nonatomic, strong) NSLayoutConstraint *movePadLeadingToPreview;
+@property (nonatomic, strong) NSLayoutConstraint *orbitPadLeadingToSafe;
+@property (nonatomic, strong) NSLayoutConstraint *orbitPadLeadingToPreview;
 @property (nonatomic, strong) NSLayoutConstraint *camPreviewWidth;
 @property (nonatomic, strong) NSLayoutConstraint *camPreviewHeight;
 @property (nonatomic, copy) NSArray<NSString *> *animNames;
@@ -441,22 +443,31 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.camPreviewView.image = nil;
     self.glView.hostVideoVisible = on;
     if (!on) {
+        self.glView.hostVideoExpanded = NO;
         [self tearDownCamPreviewPipeline];
     }
     [self.camPreviewButton setTitle:(on ? @"Cam:On" : @"Cam:Off") forState:UIControlStateNormal];
     self.camPreviewWidth.constant = on ? 108.0 : 0.0;
     self.camPreviewHeight.constant = on ? 144.0 : 0.0;
-    self.movePadLeadingToSafe.active = !on;
-    self.movePadLeadingToPreview.active = on;
+    self.orbitPadLeadingToSafe.active = !on;
+    self.orbitPadLeadingToPreview.active = on;
     [self syncHostVideoRectToGL];
 }
 
 - (void)syncHostVideoRectToGL {
     if (!self.glView || !self.camPreviewView) return;
-    // 即使 UIImageView hidden，约束仍给出与原先预览相同的 frame
+    // 即使 UIImageView hidden，约束仍给出与原先预览相同的 frame（收起态命中区）
     [self.view layoutIfNeeded];
     CGRect r = [self.camPreviewView convertRect:self.camPreviewView.bounds toView:self.glView];
     [self.glView setHostVideoScreenRect:r];
+    // 放大才显示视频前后按钮
+    BOOL showVid = self.camPreviewEnabled && self.glView.hostVideoExpanded;
+    if (self.videoDepthPad.hidden == showVid)
+        self.videoDepthPad.hidden = !showVid;
+    if (!showVid) {
+        [self.glView setHostVideoMoveCloser:NO];
+        [self.glView setHostVideoMoveFarther:NO];
+    }
 }
 
 #pragma mark - Live（Media ViewController → PushStream + 开关）
@@ -787,6 +798,15 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     self.arDumpLabel.text = @"ARKit: starting…";
     [self.view addSubview:self.arDumpLabel];
 
+    // 相机 WASD 左侧：绕人世界 Y（头→脚）左右环绕，始终看人
+    self.orbitPad = [[UIStackView alloc] init];
+    self.orbitPad.axis = UILayoutConstraintAxisVertical;
+    self.orbitPad.spacing = 6;
+    self.orbitPad.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.orbitPad addArrangedSubview:[self makeHoldButton:@"绕左" began:@selector(orbitLeftOn) ended:@selector(orbitLeftOff)]];
+    [self.orbitPad addArrangedSubview:[self makeHoldButton:@"绕右" began:@selector(orbitRightOn) ended:@selector(orbitRightOff)]];
+    [self.view addSubview:self.orbitPad];
+
     self.movePad = [[UIStackView alloc] init];
     self.movePad.axis = UILayoutConstraintAxisVertical;
     self.movePad.spacing = 6;
@@ -815,11 +835,22 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     [self.view addSubview:self.movePad];
     [self.view bringSubviewToFront:self.movePad];
 
+    // 视频放大时：相机按钮右侧 — 前/后移动视频板
+    self.videoDepthPad = [[UIStackView alloc] init];
+    self.videoDepthPad.axis = UILayoutConstraintAxisVertical;
+    self.videoDepthPad.spacing = 6;
+    self.videoDepthPad.translatesAutoresizingMaskIntoConstraints = NO;
+    self.videoDepthPad.hidden = YES;
+    [self.videoDepthPad addArrangedSubview:[self makeHoldButton:@"Vid前" began:@selector(vidCloserOn) ended:@selector(vidCloserOff)]];
+    [self.videoDepthPad addArrangedSubview:[self makeHoldButton:@"Vid后" began:@selector(vidFartherOn) ended:@selector(vidFartherOff)]];
+    [self.view addSubview:self.videoDepthPad];
+    [self.view bringSubviewToFront:self.videoDepthPad];
+
     UILayoutGuide *g = self.view.safeAreaLayoutGuide;
-    self.movePadLeadingToSafe = [self.movePad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12];
-    self.movePadLeadingToPreview = [self.movePad.leadingAnchor constraintEqualToAnchor:self.camPreviewView.trailingAnchor constant:10];
-    self.movePadLeadingToSafe.active = NO;
-    self.movePadLeadingToPreview.active = YES;
+    self.orbitPadLeadingToSafe = [self.orbitPad.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:12];
+    self.orbitPadLeadingToPreview = [self.orbitPad.leadingAnchor constraintEqualToAnchor:self.camPreviewView.trailingAnchor constant:10];
+    self.orbitPadLeadingToSafe.active = NO;
+    self.orbitPadLeadingToPreview.active = YES;
 
     [NSLayoutConstraint activateConstraints:@[
         [self.pauseButton.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-8],
@@ -868,7 +899,12 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
         [self.arDumpLabel.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-8],
         [self.arDumpLabel.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-8],
 
-        [self.movePad.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
+        [self.orbitPad.bottomAnchor constraintEqualToAnchor:self.arDumpLabel.topAnchor constant:-8],
+        [self.movePad.leadingAnchor constraintEqualToAnchor:self.orbitPad.trailingAnchor constant:8],
+        [self.movePad.bottomAnchor constraintEqualToAnchor:self.orbitPad.bottomAnchor],
+
+        [self.videoDepthPad.leadingAnchor constraintEqualToAnchor:self.movePad.trailingAnchor constant:8],
+        [self.videoDepthPad.bottomAnchor constraintEqualToAnchor:self.movePad.bottomAnchor],
     ]];
     self.camPreviewWidth = [self.camPreviewView.widthAnchor constraintEqualToConstant:108];
     self.camPreviewHeight = [self.camPreviewView.heightAnchor constraintEqualToConstant:144];
@@ -878,7 +914,9 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
     [self applyCamPreviewVisible:YES];
     [self refreshLiveQualityButton];
     [self.view bringSubviewToFront:self.camPreviewView];
+    [self.view bringSubviewToFront:self.orbitPad];
     [self.view bringSubviewToFront:self.movePad];
+    [self.view bringSubviewToFront:self.videoDepthPad];
     if (self.loadingOverlay) {
         [self.view bringSubviewToFront:self.loadingOverlay];
     }
@@ -1028,5 +1066,15 @@ didUpdateCapturedImage:(CVPixelBufferRef)image
 - (void)upOff { [self.glView setMoveUp:NO]; }
 - (void)downOn { [self.glView setMoveDown:YES]; }
 - (void)downOff { [self.glView setMoveDown:NO]; }
+
+- (void)orbitLeftOn { [self.glView setOrbitLeft:YES]; }
+- (void)orbitLeftOff { [self.glView setOrbitLeft:NO]; }
+- (void)orbitRightOn { [self.glView setOrbitRight:YES]; }
+- (void)orbitRightOff { [self.glView setOrbitRight:NO]; }
+
+- (void)vidCloserOn { [self.glView setHostVideoMoveCloser:YES]; }
+- (void)vidCloserOff { [self.glView setHostVideoMoveCloser:NO]; }
+- (void)vidFartherOn { [self.glView setHostVideoMoveFarther:YES]; }
+- (void)vidFartherOff { [self.glView setHostVideoMoveFarther:NO]; }
 
 @end

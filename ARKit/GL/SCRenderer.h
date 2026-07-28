@@ -30,8 +30,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// 与 UIKit 前置预览小窗对齐（glView 坐标系，点）
 - (void)setHostVideoScreenRect:(CGRect)rectInGLView;
-/// 视频矩形绕面对角线旋转角（度），[0, 90]，按住小窗上下拖
+/// 视频绕底边前后翻（度）：上滑向后(负)、下滑向前(正)，[-90, 90]
 @property (nonatomic, assign) float hostVideoRotationDegrees;
+/// 点击视频区：大矩形移到人物身后（仍可见矩形）；再点恢复小窗
+@property (nonatomic, assign) BOOL hostVideoExpanded;
+- (void)toggleHostVideoExpanded;
 
 /// Camera move (hold buttons typically call these).
 - (void)setMoveForward:(BOOL)on;
@@ -40,6 +43,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setMoveRight:(BOOL)on;
 - (void)setMoveUp:(BOOL)on;
 - (void)setMoveDown:(BOOL)on;
+/// 绕人物 Y 轴环绕（始终看人）
+- (void)setOrbitLeft:(BOOL)on;
+- (void)setOrbitRight:(BOOL)on;
+/// 展开视频时：按住前后移动视频板（世界 Z）
+- (void)setHostVideoMoveCloser:(BOOL)on;
+- (void)setHostVideoMoveFarther:(BOOL)on;
 
 /// Clip names from the loaded model (ready after startRendering succeeds).
 - (NSArray<NSString *> *)animationNames;

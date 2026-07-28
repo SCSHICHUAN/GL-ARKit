@@ -133,6 +133,21 @@ public:
             Position -= Up * sideVel;
     }
 
+    /// 朝向目标点，更新 Yaw/Pitch（用于绕人 Y 轴环绕后始终看着人）
+    void LookAtPoint(glm::vec3 target)
+    {
+        glm::vec3 dir = target - Position;
+        float len = glm::length(dir);
+        if (len < 1e-5f) return;
+        dir /= len;
+        float py = dir.y;
+        if (py > 0.99f) py = 0.99f;
+        if (py < -0.99f) py = -0.99f;
+        Pitch = glm::degrees(asinf(py));
+        Yaw = glm::degrees(atan2f(dir.z, dir.x));
+        updateCameraVectors();
+    }
+
     // 摄像机旋转
     void ProcessMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch = true)
     {

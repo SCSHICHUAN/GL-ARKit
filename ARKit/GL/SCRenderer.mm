@@ -34,6 +34,7 @@
 @property (nonatomic, assign) CVPixelBufferRef pendingHostVideoBuffer;
 @property (nonatomic, assign) CGImagePropertyOrientation pendingHostVideoOrientation;
 @property (nonatomic, assign) CGRect hostVideoHitRect;
+@property (nonatomic, assign) CGRect hostVideoCollapsedHitRect;
 @property (nonatomic, assign) BOOL hostVideoDragging;
 @property (nonatomic, assign) CGFloat hostVideoDragStartX;
 @property (nonatomic, assign) float hostVideoDragStartRot;
@@ -232,7 +233,9 @@
     if (self.hostVideoPlane.hasTexture) {
         self.data->setHostVideoTextures(self.hostVideoPlane.yTextureName,
                                         self.hostVideoPlane.uvTextureName,
-                                        true);
+                                        true,
+                                        self.hostVideoPlane.pixelWidth,
+                                        self.hostVideoPlane.pixelHeight);
         self.data->setHostVideoOrientation((int)self.hostVideoPlane.orientation);
         self.data->setHostVideoMirrorX(self.hostVideoPlane.mirrorX);
     } else {
@@ -263,6 +266,8 @@
 }
 
 - (void)setHostVideoScreenRect:(CGRect)rectInGLView {
+    // 收起/展开共用：点击恢复、上下滑旋转都打在这个小窗区域
+    self.hostVideoCollapsedHitRect = rectInGLView;
     self.hostVideoHitRect = rectInGLView;
     if (!self.data) return;
     CGFloat bw = CGRectGetWidth(self.bounds);
@@ -276,16 +281,29 @@
 }
 
 - (void)setHostVideoRotationDegrees:(float)degrees {
-    if (degrees < 0.f) degrees = 0.f;
+    if (degrees < -90.f) degrees = -90.f;
     if (degrees > 90.f) degrees = 90.f;
     _hostVideoRotationDegrees = degrees;
     if (self.data) self.data->setHostVideoRotationDegrees(degrees);
 }
 
+- (void)setHostVideoExpanded:(BOOL)expanded {
+    if (_hostVideoExpanded == expanded) return;
+    _hostVideoExpanded = expanded;
+    if (self.data) self.data->setHostVideoExpanded(expanded);
+    // 命中区始终是小窗；不因展开改成全屏，也不清零旋转角
+    self.hostVideoHitRect = self.hostVideoCollapsedHitRect;
+}
+
+- (void)toggleHostVideoExpanded {
+    self.hostVideoExpanded = !self.hostVideoExpanded;
+}
+
 - (BOOL)pointInsideHostVideo:(CGPoint)p {
     if (!self.hostVideoVisible) return NO;
-    if (CGRectIsEmpty(self.hostVideoHitRect) || CGRectGetWidth(self.hostVideoHitRect) < 1) return NO;
-    return CGRectContainsPoint(self.hostVideoHitRect, p);
+    CGRect r = self.hostVideoCollapsedHitRect;
+    if (CGRectIsEmpty(r) || CGRectGetWidth(r) < 1) return NO;
+    return CGRectContainsPoint(r, p);
 }
 
 #pragma mark - Camera gestures
@@ -299,10 +317,24 @@
     UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(onPinch:)];
     pinch.delegate = self;
     [self addGestureRecognizer:pinch];
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(onHostVideoTap:)];
+    tap.numberOfTapsRequired = 1;
+    tap.delegate = self;
+    [self addGestureRecognizer:tap];
+    // 轻点优先：拖动才转相机/扭小窗
+    [pan requireGestureRecognizerToFail:tap];
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch {
     return ![touch.view isKindOfClass:[UIControl class]];
+}
+
+- (void)onHostVideoTap:(UITapGestureRecognizer *)gr {
+    if (gr.state != UIGestureRecognizerStateEnded) return;
+    CGPoint p = [gr locationInView:self];
+    if (![self pointInsideHostVideo:p]) return;
+    [self toggleHostVideoExpanded];
 }
 
 - (void)onPan:(UIPanGestureRecognizer *)gr {
@@ -310,9 +342,10 @@
     CGFloat scale = self.contentScaleFactor;
     if (gr.state == UIGestureRecognizerStateBegan) {
         CGPoint p = [gr locationInView:self];
+        // 收起/展开：小窗区域内上下滑都旋转视频面
         if ([self pointInsideHostVideo:p]) {
             self.hostVideoDragging = YES;
-            self.hostVideoDragStartX = p.y; // 复用字段存起始 Y
+            self.hostVideoDragStartX = p.y;
             self.hostVideoDragStartRot = self.hostVideoRotationDegrees;
             [gr setTranslation:CGPointZero inView:self];
             return;
@@ -322,10 +355,10 @@
         [gr setTranslation:CGPointZero inView:self];
     } else if (gr.state == UIGestureRecognizerStateChanged) {
         if (self.hostVideoDragging) {
-            // 按住小窗上下拖：整高约对应 0→90°（上滑增大）
-            CGFloat h = MAX(CGRectGetHeight(self.hostVideoHitRect), 1.0);
+            CGFloat h = MAX(CGRectGetHeight(self.hostVideoCollapsedHitRect), 1.0);
+            // 上滑 → 负角向后；下滑 → 正角向前（绕底边，-90~90）
             CGFloat dy = self.hostVideoDragStartX - [gr locationInView:self].y;
-            float deg = self.hostVideoDragStartRot + (float)(dy / h * 90.0);
+            float deg = self.hostVideoDragStartRot - (float)(dy / h * 90.0);
             self.hostVideoRotationDegrees = deg;
             return;
         }
@@ -364,6 +397,15 @@
 - (void)setMoveRight:(BOOL)on    { if (self.data) self.data->setMoveRight(on); }
 - (void)setMoveUp:(BOOL)on       { if (self.data) self.data->setMoveUp(on); }
 - (void)setMoveDown:(BOOL)on     { if (self.data) self.data->setMoveDown(on); }
+- (void)setOrbitLeft:(BOOL)on    { if (self.data) self.data->setOrbitLeft(on); }
+- (void)setOrbitRight:(BOOL)on   { if (self.data) self.data->setOrbitRight(on); }
+
+- (void)setHostVideoMoveCloser:(BOOL)on {
+    if (self.data) self.data->setHostVideoMoveCloser(on);
+}
+- (void)setHostVideoMoveFarther:(BOOL)on {
+    if (self.data) self.data->setHostVideoMoveFarther(on);
+}
 
 #pragma mark - Scene / animation (for VC buttons)
 
