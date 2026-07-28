@@ -650,7 +650,9 @@ struct SCRendererData::Impl {
             yuvQuadShader->setMat4("projection", projection);
             yuvQuadShader->setMat4("view", view);
             yuvQuadShader->setMat4("model", model);
-            yuvQuadShader->setBool("flipTexY", renderFlipY);
+            // 世界平面走真实投影：推流 FlipY 已在 projection 里完成（与角色一致）。
+            // 若再 flipTexY，观看端会上下颠倒。小窗 NDC 路径仍用 flipTexY。
+            yuvQuadShader->setBool("flipTexY", false);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             if (!depthWas) glDisable(GL_DEPTH_TEST);
